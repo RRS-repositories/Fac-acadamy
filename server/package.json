@@ -1,0 +1,29 @@
+{
+  "name": "@fac-academy/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "FAC Academy API and background worker",
+  "scripts": {
+    "dev": "tsx watch src/entry/api.ts",
+    "dev:worker": "tsx watch src/entry/worker.ts",
+    "build": "tsup",
+    "start": "node dist/api.js",
+    "start:worker": "node dist/worker.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fac-academy/shared": "*",
+    "express": "^5.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
+  }
+}

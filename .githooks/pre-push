@@ -1,0 +1,17 @@
+#!/bin/sh
+# Refuse any push to main (GIT-WORKFLOW-RULES: branch -> PR -> merge).
+# Enable once per clone:  git config core.hooksPath .githooks
+# It is a client-side safety net, not a wall: --no-verify bypasses it.
+
+protected="refs/heads/main"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "$protected" ]; then
+    echo "pre-push: pushing to main is not allowed." >&2
+    echo "Push your branch and open a pull request instead:" >&2
+    echo "  git push -u origin <yourname>/<short-description>" >&2
+    exit 1
+  fi
+done
+
+exit 0

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Throw-away databases, used from S01. Synthetic data only.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: academy_ci
+          POSTGRES_USER: academy
+          POSTGRES_PASSWORD: academy_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U academy -d academy_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # The flag is on only here; production stays off until Brad signs off.
+      ACADEMY_V2: 'true'
+      DATABASE_URL: postgres://academy:academy_ci_only@localhost:5432/academy_ci
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-only-dummy-session-secret-not-used-anywhere-else
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Forbidden files (media, prototype, .env, exports)
+        run: npm run check:files
+
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+
+      # Migrations arrive in S01; applied to the throw-away Postgres above.
+      - name: Migrations
+        run: npm run migrate -w @fac-academy/server --if-present
+
+      - run: npm test
+      - run: npm run build
+
+      - name: Bundle leak check (no answers or lesson text in client/dist)
+        run: npm run check:bundle

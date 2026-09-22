@@ -1,0 +1,10 @@
+{
+  "name": "@fac-academy/ops",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Operator scripts (content seed, media extraction, deploy templates). Never shipped to the browser.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

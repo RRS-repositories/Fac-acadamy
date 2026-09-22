@@ -7,11 +7,26 @@
 | Item | State |
 |---|---|
 | Repo | `E:\RRC\fac-academy`, remote `RRS-repositories/Fac-acadamy`. Only the "first commit" README is on GitHub (`main`) |
-| Current branch | `sukhendu/project-plan` (local only) |
-| Uncommitted files | `CLAUDE.md`, `docs/PROJECT-PLAN.md`, `docs/HANDOFF.md` |
+| Current branch | `sukhendu/academy-phase-0` (local only; 2 commits on top of `main`: planning docs, Phase 0 scaffolding) |
+| Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
-| Code | None yet. Planning is done |
-| Next step | **Phase 0 scaffolding**, local only: workspaces `client`, `server`, `shared`, `ops`, `e2e`, strict TS, ESLint/Prettier, `.gitignore`, `.githooks` pre-push guard, `docker-compose.yml` (Postgres 16, Redis 7, MinIO), `.env.example`, CI skeleton. Then **Section 01** |
+| Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
+| Next step | **Section 01 (Foundation)**: env loader, pool, migrations 0000–0002, real `/api/health`, flag middleware. Raise CRM PR #1 (`academy-verify`) in parallel. **Docker isn't installed on this machine**, so install Docker Desktop (or point `DATABASE_URL`/`REDIS_URL` at another local Postgres 16 / Redis 7) before S01's migration checks |
+
+## Phase 0 gate results (22 Sep, run locally)
+
+| Check | Result |
+|---|---|
+| `check:files` | OK, 57 files |
+| Prettier | clean (`*.md` excluded via `.prettierignore`: hand-formatted tables) |
+| ESLint | 0 errors, 0 warnings |
+| Typecheck (shared, server, ops, e2e) | pass |
+| Unit tests | shared 14, server 3, client 2: all pass |
+| Builds | server (tsup) and client (vite, no source maps) succeed; compiled API answers `/api/health` |
+| Bundle leak check | passes; no canaries until S02 |
+| pre-push hook | blocks `main`, allows branches |
+
+One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 5-minute install on the slow E: drive. It didn't reproduce in 12 later runs. If it comes back, capture it with `npx vitest run > out.txt 2>&1`.
 
 ## Documents
 

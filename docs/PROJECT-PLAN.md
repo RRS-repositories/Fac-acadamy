@@ -121,14 +121,14 @@ These add to the standing `GIT-WORKFLOW-RULES` and `DATA-HYGIENE-RULES`, which a
 
 | Layer | Choice |
 |---|---|
-| Language/runtime | TypeScript everywhere (strict), Node 22 LTS, npm workspaces |
+| Language/runtime | Node 22 LTS, npm workspaces, **ES modules only (no CommonJS)**. **Server + shared: strict TypeScript. Client: plain JavaScript (`.jsx`)** (user instruction, 22 Sep) |
 | API | Express, `zod` for validation, `pg`, `node-pg-migrate` (plain SQL files) |
 | Auth | `otplib` + `qrcode` (TOTP), `express-session` + `connect-redis`, a per-user session index so disabling someone deletes their sessions at once, `rate-limiter-flexible` |
 | Jobs | BullMQ with `prefix: 'academy'`. Queue names **must not contain `:`**, because BullMQ 6 throws on them, so the spec's `academy:signin-events` becomes `signin-events` under the prefix |
 | Media | `@aws-sdk/client-s3` + presigner, `ffprobe-static` for durations, an **authenticated streaming proxy** so long audio and video don't break when a 60-second link expires mid-play |
 | Email | `@aws-sdk/client-sesv2` |
 | PDF | Server-side HTML → PDF (Playwright/Chromium) so certificates match the app's look |
-| Web | React 18, Vite, React Router, TanStack Query. Design tokens copied 1:1 from the prototype (navy `#16324F`, orange `#E8713A`, Outfit/Inter) |
+| Web | React 18 + Vite in **plain JSX**, **Tailwind CSS v4** (`@tailwindcss/vite`), React Router, TanStack Query. The prototype's design tokens (navy `#16324F`, orange `#E8713A`, Outfit/Inter) become Tailwind `@theme` tokens |
 | Tests | Vitest (unit), Supertest (API), Playwright (E2E) |
 | CI | GitHub Actions: lint → typecheck → apply migrations to a throw-away Postgres → tests → bundle-leak grep |
 
@@ -183,15 +183,15 @@ The browser code and the server code live in separate workspaces and never impor
 
 ```
 fac-academy/
-├── client/                      React 18 + Vite SPA. Built to client/dist, served by nginx at academy.fastactionclaims.com/
+├── client/                      React 18 + Vite + Tailwind SPA, plain JSX. Built to client/dist, served by nginx at academy.fastactionclaims.com/
 │   ├── index.html
-│   ├── vite.config.ts           dev proxy: /api → http://localhost:4100 (same origin, as in production)
+│   ├── vite.config.js           dev proxy: /api → http://localhost:4100 (same origin, as in production)
 │   ├── public/                  favicon + font files only. No lesson text, no media
 │   ├── src/
-│   │   ├── main.tsx · App.tsx · routes.tsx
-│   │   ├── api/                 typed fetch client + TanStack Query hooks (uses shared/ contracts)
+│   │   ├── main.jsx · App.jsx · routes.jsx
+│   │   ├── api/                 fetch client + TanStack Query hooks (validates with shared/ zod contracts)
 │   │   ├── auth/                session context, <RequireAuth>, <RequireManager>
-│   │   ├── styles/              tokens.css (ported from the prototype :root), base.css, components.css
+│   │   ├── styles/              index.css: Tailwind + @theme tokens ported from the prototype :root
 │   │   ├── components/          Rail, StagePills, StageCard, LockedCard, NextUpCta, Toast,
 │   │   │                        ErrorBanner, NoSeekPlayer, AccomplishmentBanner
 │   │   ├── pages/
@@ -200,7 +200,7 @@ fac-academy/
 │   │   │   ├── reference/       StatusGuide
 │   │   │   ├── certs/           MyCertificates, VerifyCertificate (public page)
 │   │   │   └── manager/         Roster, Stuck, TraineeDetail, PreviewAsTrack, MediaUpload
-│   │   └── lib/                 scroll.ts (navigation → top; in-place → never), listenBeacons.ts
+│   │   └── lib/                 scroll.js (navigation → top; in-place → never), listenBeacons.js
 │   └── test/                    Vitest + Testing Library
 │
 ├── server/                      Express API + BullMQ worker: two processes from one codebase
@@ -239,7 +239,7 @@ fac-academy/
 │   ├── media/extract-media.ts   embedded MP3s → S3 directly, never to disk in the repo
 │   ├── fixtures/                expected-track-visibility.json (stage ids only)
 │   ├── nginx/academy.conf.template
-│   ├── pm2/ecosystem.config.cjs
+│   ├── pm2/ecosystem.config.js (ESM)
 │   └── deploy.sh                pull → install → build → pm2 reload (migrations are Brad's)
 │
 ├── e2e/                         Playwright suite (S10)

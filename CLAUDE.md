@@ -50,5 +50,6 @@ The CRM's `E:\RRC\CRM-Finalised\CLAUDE.md` also applies: the operating model (re
 - Same Postgres DB as the CRM, but **schema `academy` only**, role `academy_app` with no rights on CRM tables, a small pool (~10) and a statement timeout.
 - One `gate()` function guards every content route. The server enforces every lock and grades every quiz; the client is never trusted.
 - BullMQ queue names **must not contain `:`** (BullMQ 6 throws). Use `prefix: 'academy'` with plain names.
-- Stack: TypeScript (strict), Node 22, Express, React + Vite, Postgres, BullMQ/Redis, S3, SES, Mattermost bot. **No n8n.**
+- Stack (user instruction, 22 Sep): **front end = React + Vite + Tailwind CSS in plain JavaScript (`.jsx`/`.js`, no `.tsx`)**; **back end = Node 22 + Express in strict TypeScript**; `shared/` contracts in TypeScript (zod), which Vite reads directly. Postgres, BullMQ/Redis, S3, SES, Mattermost bot. **No n8n.**
+- **ES modules only, never CommonJS** (user instruction, 22 Sep): `"type": "module"` in every package, `import`/`export` only, no `require`/`module.exports`, no `.cjs` files.
 - Run the lint, typecheck and test gates yourself before calling anything done. A subagent reporting success is not evidence.
