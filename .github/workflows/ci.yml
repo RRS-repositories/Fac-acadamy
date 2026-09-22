@@ -52,6 +52,8 @@ jobs:
       DB_SSL: 'false'
       REDIS_URL: redis://localhost:6379
       SESSION_SECRET: ci-only-dummy-session-secret-not-used-anywhere-else
+      # Lets server/test/db/migrations.test.ts wipe and re-migrate this throw-away DB.
+      MIGRATION_TEST_DB_NAME: academy_ci
 
     steps:
       - uses: actions/checkout@v4
@@ -70,9 +72,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
 
-      # Migrations arrive in S01; applied to the throw-away Postgres above.
+      # Applies server/migrations to the throw-away Postgres above. The
+      # --expect-db guard refuses to write to any other database.
       - name: Migrations
-        run: npm run migrate -w @fac-academy/server --if-present
+        run: npm run migrate -w @fac-academy/server -- --commit --expect-db academy_ci
 
       - run: npm test
       - run: npm run build

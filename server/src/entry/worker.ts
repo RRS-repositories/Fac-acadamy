@@ -1,5 +1,19 @@
 // Background worker. Queues arrive in later sections: BullMQ with
 // prefix 'academy' and plain queue names (BullMQ throws on names containing ':').
+import { loadDotenvIfPresent } from '../config/dotenv.js';
+import { ConfigError, loadConfig } from '../config/env.js';
+
+loadDotenvIfPresent();
+
+try {
+  loadConfig();
+} catch (err) {
+  if (err instanceof ConfigError) {
+    console.error(`[academy-worker] Refusing to start: ${err.message}`);
+    process.exit(1);
+  }
+  throw err;
+}
 
 console.log('[academy-worker] started; no queues registered yet (they arrive in later sections)');
 

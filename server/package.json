@@ -11,15 +11,19 @@
     "start": "node dist/api.js",
     "start:worker": "node dist/worker.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@fac-academy/shared": "*",
     "express": "^5.1.0",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.2",
     "supertest": "^7.0.0",
     "tsup": "^8.3.0",
