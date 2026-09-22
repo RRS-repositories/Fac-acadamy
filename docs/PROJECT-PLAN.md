@@ -65,6 +65,8 @@ This table is the baseline fixture for the Section 02, 04 and 10 tests.
 | D9 | **Domain (working assumption, 22 Sep):** `academy.fastactionclaims.com`, next to `crm.fastactionclaims.com`. The browser app and the API share one origin (`/` and `/api/*`), so there's no CORS and the session cookie stays host-only. Who manages DNS is still to be confirmed (Q2). |
 | D11 | **New-starter sign-in (Q1, decided 22 Sep): approve first.** IT approves the starter in Mattermost before day one, the CRM account is created, and the starter signs in to the academy with CRM credentials + TOTP. There's no academy-only login. The provisioning flow (S08) is triggered by a request raised before the starter arrives, not by their first academy sign-in. |
 | D10 | **Code layout:** `client/` (React SPA), `server/` (API + worker), `shared/` (API contracts only), plus `ops/` and `e2e/`. See §7. |
+| D13 | **First-time trainees start with no track (22 Sep).** The trainee row is created at first sign-in with no track, and the home page says "waiting for a manager to assign a track". The manager assigns it (S07 screen; the API endpoint exists from S03). Until then IT can set it with `ops/admin/set-track.ts` (audited). Migration 0004 makes `trainees.track` optional. |
+| D14 | **Roles (22 Sep):** only the CRM role `Management` becomes MANAGER; everyone else is STAFF. An IT-set `role_overrides` row wins either way (`ops/admin/set-role-override.ts`). IT resets a lost authenticator with an audited ops command (`ops/admin/reset-mfa.ts`), not through an in-app IT role. |
 
 ---
 
@@ -353,7 +355,7 @@ Estimated total **≈ 19–24 dev-days**, before review cycles.
 - [ ] Disable during an active session → next request refused within 5 s (timed script)
 - [ ] Disabled account can't sign in; re-enable restores access
 - [ ] 11 rapid failures → lockout
-- [ ] No `FAC2026` anywhere; audit rows for every auth event
+- [ ] The old demo passcode appears nowhere; audit rows for every auth event
 
 ### S04: API & gating
 - [ ] Every content route goes through `gate()` (enforced by a test)

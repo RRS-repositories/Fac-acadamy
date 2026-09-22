@@ -19,7 +19,11 @@
     "express": "^5.1.0",
     "ioredis": "^6.0.0",
     "pg": "^8.23.0",
-    "zod": "^3.24.0"
+    "zod": "^3.24.0",
+    "otplib": "^12.0.1",
+    "qrcode": "^1.5.4",
+    "rate-limiter-flexible": "^5.0.3",
+    "cookie-parser": "^1.4.7"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
@@ -28,6 +32,8 @@
     "supertest": "^7.0.0",
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/cookie-parser": "^1.4.8"
   }
 }

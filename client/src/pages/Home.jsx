@@ -1,44 +1,25 @@
-import { useHealth } from '../api/client.js';
+import { TRACKS } from '@fac-academy/shared';
+import AppShell from '../components/AppShell.jsx';
+import { useAuth } from '../auth/AuthProvider.jsx';
 
-function ApiStatus() {
-  const { isPending, isError, data } = useHealth();
-
-  let text = 'Checking API…';
-  let tone = 'text-muted';
-  if (!isPending) {
-    if (!isError && data?.ok) {
-      text = 'API reachable';
-      tone = 'text-green';
-    } else {
-      text = 'API not reachable';
-      tone = 'text-red';
-    }
-  }
-
-  return (
-    <p role="status" className={`text-sm font-medium ${tone}`}>
-      {text}
-    </p>
-  );
+function firstName(fullName) {
+  return fullName.trim().split(/\s+/)[0] || fullName;
 }
 
+// Placeholder dashboard until the learner pages land. Behind <RequireAuth>, so
+// `me` is always set and has a track here.
 export default function Home() {
+  const { me } = useAuth();
+  const track = TRACKS.find((t) => t.code === me.track);
+
   return (
-    <div className="min-h-screen">
-      <header className="bg-navy text-white">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-4">
-          <span aria-hidden="true" className="inline-block h-3.5 w-3.5 rounded bg-orange" />
-          <h1 className="font-display text-xl font-bold tracking-wide text-white">FAC Academy</h1>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl px-6 py-10">
-        <section className="rounded-card border border-line bg-card p-6 shadow-card">
-          <h2 className="text-lg font-semibold">Training portal — under construction</h2>
-          <div className="mt-3">
-            <ApiStatus />
-          </div>
-        </section>
-      </main>
-    </div>
+    <AppShell>
+      <section className="rounded-card border border-line bg-card p-6 shadow-card">
+        <h2 className="text-lg font-semibold">Welcome, {firstName(me.fullName)}</h2>
+        <p className="mt-2 text-muted">
+          Your programme: <b className="text-ink">{track ? track.label : me.track}</b>
+        </p>
+      </section>
+    </AppShell>
   );
 }

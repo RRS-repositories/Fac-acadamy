@@ -1,18 +1,15 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import BrandPanel from '../../components/auth/BrandPanel.jsx';
-import {
-  MOCK_REJECTED_CODE,
-  MOCK_SCENARIOS,
-  mockSignIn,
-  mockVerifyCode,
-} from '../../auth/mockAuth.js';
+import { ApiError, login, verifyMfa } from '../../api/client.js';
+import { useAuth } from '../../auth/AuthProvider.jsx';
+import { safeNext } from '../../auth/safeNext.js';
 
 // Sign-in screen. Production flow (D11, approve first): the starter's CRM
 // account already exists, so they sign in with CRM email + password, then an
 // authenticator code. First sign-in sets the authenticator up. There is no
 // staff/manager tab and no passcode: the role comes from the account.
-// MOCK: the API calls are stand-ins until Section 03 (see auth/mockAuth.js).
+// API: POST /api/auth/login, then POST /api/auth/mfa (shared/contracts/auth).
 
 const ERROR_TEXT = {
   invalid_credentials:
@@ -22,7 +19,19 @@ const ERROR_TEXT = {
   disabled: 'This account has been disabled. Please speak to your manager.',
   invalid_code:
     "That code didn't work. Codes change every 30 seconds, so enter the newest one from your app.",
+  rate_limited: 'Too many attempts from this device. Wait a minute and try again.',
+  auth_unavailable: 'Sign-in is temporarily unavailable. Please try again shortly.',
+  mfa_required: 'Your sign-in took too long. Please start again.',
+  not_approved: "Your CRM account isn't approved yet. Ask IT.",
+  flag_off: "The training portal isn't open yet.",
 };
+
+// The pending sign-in step has gone on the server: back to step 1.
+const RESTART_CODES = new Set(['mfa_required', 'not_signed_in']);
+
+function errorCode(error) {
+  return error instanceof ApiError ? error.code : 'unknown';
+}
 
 const inputClass =
   'w-full rounded-[10px] border-[1.5px] border-line bg-white px-4 py-3 text-[15px] text-ink placeholder:text-muted/70 focus:border-orange focus:outline-none aria-[invalid=true]:border-red';
@@ -33,8 +42,11 @@ const linkButtonClass =
   'text-sm font-semibold text-navy underline decoration-line underline-offset-4 hover:decoration-navy';
 
 export default function Login() {
-  const [step, setStep] = useState('credentials'); // credentials | challenge | enrol | done
-  const [scenario, setScenario] = useState('returning');
+  const { me, status, setMe } = useAuth();
+  const [searchParams] = useSearchParams();
+  const next = safeNext(searchParams.get('next'));
+
+  const [step, setStep] = useState('credentials'); // credentials | challenge | enrol
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -63,15 +75,18 @@ export default function Login() {
     if (Object.keys(errors).length) return;
 
     setBusy(true);
-    const result = await mockSignIn({ email: email.trim(), password }, scenario);
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error);
+    let result;
+    try {
+      result = await login(email.trim(), password);
+    } catch (err) {
+      setError(errorCode(err));
       setPassword('');
       return;
+    } finally {
+      setBusy(false);
     }
     setCode('');
-    setEnrol(result.enrol ?? null);
+    setEnrol(result.next === 'enrol' ? result.enrol : null);
     setStep(result.next);
   }
 
@@ -84,23 +99,39 @@ export default function Login() {
     }
     setFieldErrors({});
     setBusy(true);
-    const result = await mockVerifyCode(code);
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error);
-      setCode('');
+    let signedInUser;
+    try {
+      signedInUser = await verifyMfa(code);
+    } catch (err) {
+      const failure = errorCode(err);
+      if (RESTART_CODES.has(failure)) {
+        startOver();
+        setError('mfa_required');
+      } else {
+        setError(failure);
+        setCode('');
+      }
       return;
+    } finally {
+      setBusy(false);
     }
-    setStep('done');
+    // Signed in: the redirect below takes them to `next`.
+    setMe(signedInUser);
   }
 
   function startOver() {
     setStep('credentials');
     setPassword('');
     setCode('');
+    setEnrol(null);
     setError(null);
     setFieldErrors({});
   }
+
+  // Already signed in (or just finished signing in): go where they were headed.
+  if (me) return <Navigate to={next} replace />;
+  // Still checking for an existing session: avoid flashing the form.
+  if (status === 'loading') return null;
 
   return (
     <div className="flex min-h-screen flex-col bg-bg lg:flex-row">
@@ -108,12 +139,6 @@ export default function Login() {
 
       <main className="flex flex-1 items-center justify-center px-5 py-10 sm:p-10">
         <div className="w-full max-w-[420px]">
-          <MockScenarioPicker
-            value={scenario}
-            onChange={setScenario}
-            disabled={step !== 'credentials'}
-          />
-
           {step === 'credentials' && (
             <form onSubmit={submitCredentials} noValidate>
               <h2 className="mb-1.5 text-[26px] font-bold">Sign in to start training</h2>
@@ -231,7 +256,13 @@ export default function Login() {
                 </EnrolStep>
                 <EnrolStep n={2}>
                   <span>Scan this QR code with the app.</span>
-                  <QrPlaceholder />
+                  <img
+                    src={enrol.qrDataUrl}
+                    alt="QR code to add FAC Academy to your authenticator app"
+                    width={160}
+                    height={160}
+                    className="mt-2.5 size-40 rounded-xl border border-line bg-white p-2"
+                  />
                   <details className="mt-2">
                     <summary className="cursor-pointer text-[13px] font-semibold text-navy">
                       Can&apos;t scan it? Enter a key instead
@@ -260,29 +291,6 @@ export default function Login() {
                 </button>
               </div>
             </form>
-          )}
-
-          {step === 'done' && (
-            <div>
-              <h2
-                ref={headingRef}
-                tabIndex={-1}
-                className="mb-1.5 text-[26px] font-bold focus:outline-none"
-              >
-                You&apos;re signed in
-              </h2>
-              <p className="mb-6 text-sm text-muted">
-                In the live portal you would now land on your training dashboard.
-              </p>
-              <Link to="/" className={primaryButtonClass}>
-                Continue
-              </Link>
-              <div className="mt-5">
-                <button type="button" onClick={startOver} className={linkButtonClass}>
-                  Try another scenario
-                </button>
-              </div>
-            </div>
           )}
         </div>
       </main>
@@ -365,49 +373,5 @@ function EnrolStep({ n, children }) {
       </span>
       <div className="min-w-0 flex-1">{children}</div>
     </li>
-  );
-}
-
-// MOCK: the real QR image comes from the server in S03 (otpauth:// URI).
-function QrPlaceholder() {
-  return (
-    <div
-      role="img"
-      aria-label="QR code placeholder"
-      className="mt-2.5 grid size-40 place-items-center rounded-xl border-2 border-dashed border-line bg-white p-3 text-center text-xs text-muted"
-    >
-      QR code appears here
-    </div>
-  );
-}
-
-// Visible only while the page runs on mock data. Removed in S03.
-function MockScenarioPicker({ value, onChange, disabled }) {
-  const id = useId();
-  return (
-    <div className="mb-7 rounded-xl border border-dashed border-amber bg-amber-soft px-3.5 py-3">
-      <label
-        htmlFor={id}
-        className="mb-1 block text-[11px] font-bold tracking-wider text-amber uppercase"
-      >
-        Mock preview · pick what sign-in returns
-      </label>
-      <select
-        id={id}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink disabled:opacity-60"
-      >
-        {MOCK_SCENARIOS.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.label}
-          </option>
-        ))}
-      </select>
-      <p className="mt-1.5 text-[11.5px] text-muted">
-        Any email and password work. Code {MOCK_REJECTED_CODE} is always rejected.
-      </p>
-    </div>
   );
 }

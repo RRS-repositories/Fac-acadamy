@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **S03 (Auth).** S02 verified locally 22 Sep: seed loads 28 stages / 66 lessons / 231 questions / 34 status rows / 48 recordings / 80 track-visibility rows into `academy_dev`; verifier 20/20 PASS; re-run writes 0 rows; repo-wide canary scan 0 hits. CRM PR #1 (`academy-verify`) is committed locally as `c8322db6` on `sukhendu/academy-verify` in the separate worktree `E:\RRC\CRM-academy-verify` (not pushed). S03 still needs local Redis (Memurai) |
+| Next step | **S04 (API & gating).** S03 verified locally 22 Sep: 171 server tests incl. every CHECKLIST 03 item (disable refused in ~17 ms); live sign-in through the proxy with the mock CRM (`CRM_AUTH_MODE=mock`, invented @example.com accounts, password `dev-password`). IT admin commands in `ops/admin/`. Open: Redis-backed stores untested locally (no Memurai; CI has Redis); CRM PR #1 must be merged + `ACADEMY_VERIFY_KEY`/`CRM_AUTH_KEY` set before real CRM sign-in |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
@@ -63,6 +63,8 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 | D12 | (22 Sep) S02 widens `call_recordings.category` for department recordings (e.g. the FOS video) in a new migration; the media column keeps the schema's name `s3_key` (section files say `media_key`) |
 | D11 | New-starter sign-in: **approve first** (Q1). No academy-only login; provisioning is requested before day one |
 | D10 | Layout: `client/` (React SPA) · `server/` (API + worker) · `shared/` (contracts only) · `ops/` · `e2e/` |
+| D13 | (22 Sep) A first-time trainee starts with no track ("waiting for a manager to assign a track"); the manager assigns it (S07), or IT meanwhile with `ops/admin/set-track.ts` |
+| D14 | (22 Sep) Only CRM role `Management` = MANAGER (IT `role_overrides` can override either way); IT resets authenticators with the audited `ops/admin/reset-mfa.ts`, not an in-app role |
 
 ## Open questions (see plan §3)
 

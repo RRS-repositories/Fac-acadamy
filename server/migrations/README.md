@@ -56,3 +56,5 @@ Each pending file runs in its own transaction with `search_path = academy, publi
 
 - `server/test/db/migrate-helpers.test.ts`: argument parsing, file ordering, hashes. No database.
 - `server/test/db/migrations.test.ts`: runs only when `MIGRATION_TEST_DB_NAME` is set. It **drops the `academy` schema in that database** and migrates it from scratch, so point it only at a throw-away database (`academy_ci` in CI, `academy_test` locally).
+
+Later migrations: `0003_seed_support.sql` (S02: DEPARTMENT recording category, department metadata, `stages.sort`, question upsert key) and `0004_auth_support.sql` (S03: `trainees.track` optional, `sessions.sid_hash`). Every new table must also grant `academy_app` its rights in the same migration.

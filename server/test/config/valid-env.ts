@@ -1,6 +1,9 @@
 // A complete, valid, entirely synthetic environment for config tests.
 // Values are placeholders; none of them are real credentials.
 export const SECRET_TOKEN_VALUE = 'bot-token-synthetic-7f3a9c1e';
+export const CRM_KEY_VALUE = 'crm-key-synthetic-0123456789abcdef-0123';
+/** base64 of 32 synthetic bytes (0x01 x 32). */
+export const MFA_KEY_VALUE = Buffer.alloc(32, 1).toString('base64');
 
 export function validEnv(): Record<string, string> {
   return {
@@ -14,6 +17,8 @@ export function validEnv(): Record<string, string> {
     ACADEMY_V2: 'false',
     STAGE1_AUTH_REQUIRED: 'false',
     CRM_AUTH_URL: 'http://localhost:3000/api/auth/academy-verify',
+    CRM_AUTH_KEY: CRM_KEY_VALUE,
+    MFA_ENCRYPTION_KEY: MFA_KEY_VALUE,
     SES_REGION: 'eu-west-2',
     SES_SENDER: 'academy@example.com',
     S3_BUCKET: 'academy-test',
@@ -35,6 +40,8 @@ export const REQUIRED_VARS = [
   'ACADEMY_V2',
   'STAGE1_AUTH_REQUIRED',
   'CRM_AUTH_URL',
+  'CRM_AUTH_KEY',
+  'MFA_ENCRYPTION_KEY',
   'SES_REGION',
   'SES_SENDER',
   'S3_BUCKET',
