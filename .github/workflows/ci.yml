@@ -19,7 +19,7 @@ jobs:
     # Throw-away databases, used from S01. Synthetic data only.
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_DB: academy_ci
           POSTGRES_USER: academy
@@ -44,7 +44,12 @@ jobs:
     env:
       # The flag is on only here; production stays off until Brad signs off.
       ACADEMY_V2: 'true'
-      DATABASE_URL: postgres://academy:academy_ci_only@localhost:5432/academy_ci
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: academy_ci
+      DB_USER: academy
+      DB_PASSWORD: academy_ci_only
+      DB_SSL: 'false'
       REDIS_URL: redis://localhost:6379
       SESSION_SECRET: ci-only-dummy-session-secret-not-used-anywhere-else
 

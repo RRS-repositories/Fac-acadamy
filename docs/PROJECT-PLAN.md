@@ -80,7 +80,7 @@ This table is the baseline fixture for the Section 02, 04 and 10 tests.
 | Q6 | Mattermost approvers, and who counts as each trainee's "manager" for alerts. *(deferred)* | S08 |
 | Q7 | Recording slots not in the S11 manifest (s1–s6 examples, Levels 2–5): keep as "coming soon", drop, or add to the manifest? | S11 |
 | Q8 | Office hours for provisioning time-outs; target go-live date. | S08 / S10 |
-| Q9 | Is the production server EC2 (build spec) or on-prem? This matters for DNS and TLS. | S10 |
+| Q9 | ~~EC2 or on-prem?~~ **Answered from the CRM repo docs: on-prem.** The CRM, its Postgres 17 and its workers run on one on-prem server, published through a Cloudflare tunnel (AWS RDS is decommissioned). So the academy's DNS/TLS goes through the same tunnel set-up. Confirm with Brad | S10 |
 | Q10 | The repo name is spelled `Fac-acadamy`. Rename it to `fac-academy` now, while it's empty? | now |
 
 ---
@@ -122,7 +122,7 @@ These add to the standing `GIT-WORKFLOW-RULES` and `DATA-HYGIENE-RULES`, which a
 | Layer | Choice |
 |---|---|
 | Language/runtime | Node 22 LTS, npm workspaces, **ES modules only (no CommonJS)**. **Server + shared: strict TypeScript. Client: plain JavaScript (`.jsx`)** (user instruction, 22 Sep) |
-| API | Express, `zod` for validation, `pg`, `node-pg-migrate` (plain SQL files) |
+| API | Express, `zod` for validation, `pg`. Migrations are plain SQL files applied by our own small runner (dry run by default, `--commit` to write), the same pattern as the CRM's `scripts/apply-*-migrations.mjs` |
 | Auth | `otplib` + `qrcode` (TOTP), `express-session` + `connect-redis`, a per-user session index so disabling someone deletes their sessions at once, `rate-limiter-flexible` |
 | Jobs | BullMQ with `prefix: 'academy'`. Queue names **must not contain `:`**, because BullMQ 6 throws on them, so the spec's `academy:signin-events` becomes `signin-events` under the prefix |
 | Media | `@aws-sdk/client-s3` + presigner, `ffprobe-static` for durations, an **authenticated streaming proxy** so long audio and video don't break when a 60-second link expires mid-play |
@@ -144,7 +144,9 @@ These add to the standing `GIT-WORKFLOW-RULES` and `DATA-HYGIENE-RULES`, which a
 - Every table lives in the `academy` schema, so there are no name clashes. The CRM already uses a separate `mail` schema the same way.
 - Login role `academy_app`: rights on `academy` only, **no rights on CRM tables**, `search_path=academy`, and a `statement_timeout`.
 - The connection pool is capped at about 10; the CRM backend already uses up to 20.
-- The academy's migration history lives in `academy`, not in the CRM's `schema_migrations`.
+- The academy's migration history lives in `academy.schema_migrations` (same columns as the CRM's ledger: `filename`, `applied_at`, `applied_by`, `note`), not in the CRM's `public.schema_migrations`.
+- **Matches the CRM's database setup (checked 22 Sep):** production is PostgreSQL **17** on the same on-prem server as the CRM; the CRM connects with `DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD` over SSL with `statement_timeout` 10 s. The academy uses the same variable names, sets `DB_NAME` explicitly (the `PG*` variables on that server belong to a different app's database), and every migration starts with a wrong-database guard like the CRM's.
+- `citext` is **not** installed in the CRM database today. Migration 0000 needs a superuser (Brad) to run `CREATE EXTENSION citext`.
 - **Brad applies production migrations** (house rule). The first one needs admin rights for `CREATE EXTENSION citext`.
 - `REVOKE UPDATE, DELETE` on the append-only tables (`audit_events`, `provisioning_events`).
 - CRM backups cover the academy automatically. The restore drill uses `pg_dump -n academy`.
@@ -167,13 +169,13 @@ Seed data: prototype questions go in as `source='HUMAN', approval_state='APPROVE
 
 | Env | Where | Data | `ACADEMY_V2` |
 |---|---|---|---|
-| **local** | Docker Compose: Postgres 16, Redis 7, MinIO (stands in for S3), MailHog-style inbox, the Mattermost API mocked | synthetic | on |
+| **local** | Docker Compose: Postgres 17 (matches production), Redis 7, MinIO (stands in for S3), MailHog-style inbox, the Mattermost API mocked | synthetic | on |
 | **CI** | GitHub Actions service containers | throw-away | on |
 | **test copy** *(if Q5 = yes)* | production server, schema `academy_test`, private URL | synthetic accounts only | on |
 | **production** | production server, schema `academy` | real staff | **off until sign-off** |
 
 **Environment variables** (the app refuses to start if a required one is missing):
-`DATABASE_URL, REDIS_URL, SESSION_SECRET, ACADEMY_V2, ACADEMY_PROVISIONING, STAGE1_AUTH_REQUIRED, AUTH_STRICT, CRM_AUTH_URL, CRM_AUTH_KEY, CRM_PUBLIC_URL, S3_BUCKET, S3_REGION, SES_REGION, SES_SENDER, MATTERMOST_URL, MATTERMOST_BOT_TOKEN, MATTERMOST_IT_CHANNEL_ID, PROVISIONING_RESPONDERS, PUBLIC_BASE_URL`. `PROTOTYPE_PATH` is used by the ops scripts only.
+`DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSL, REDIS_URL, SESSION_SECRET, ACADEMY_V2, ACADEMY_PROVISIONING, STAGE1_AUTH_REQUIRED, AUTH_STRICT, CRM_AUTH_URL, CRM_AUTH_KEY, CRM_PUBLIC_URL, S3_BUCKET, S3_REGION, SES_REGION, SES_SENDER, MATTERMOST_URL, MATTERMOST_BOT_TOKEN, MATTERMOST_IT_CHANNEL_ID, PROVISIONING_RESPONDERS, PUBLIC_BASE_URL`. `PROTOTYPE_PATH` is used by the ops scripts only.
 
 ---
 
@@ -246,7 +248,7 @@ fac-academy/
 ├── docs/                        this plan, HANDOFF, section reports, decisions log
 ├── .github/workflows/ci.yml
 ├── .githooks/pre-push           blocks pushes to main
-├── docker-compose.yml           local Postgres 16, Redis 7, MinIO, Mailpit
+├── docker-compose.yml           local Postgres 17, Redis 7, MinIO, Mailpit
 ├── .env.example                 placeholders only
 ├── .gitignore                   .env, node_modules, dist, *.mp3 *.mp4 *.wav *.m4a, the prototype HTML
 ├── tsconfig.base.json           strict; each workspace extends it
@@ -322,7 +324,7 @@ Estimated total **≈ 19–24 dev-days**, before review cycles.
 - [ ] `CLAUDE.md` pointing at the standing workflow + data-hygiene rules
 - [ ] `.gitignore` covers `.env`, `node_modules`, `dist`, `*.mp3`, `*.mp4`, the prototype HTML
 - [ ] npm workspaces `client`, `server`, `shared`, `ops`, `e2e`; strict `tsconfig.base.json`; ESLint + Prettier; client→server import ban
-- [ ] `docker-compose.yml` (Postgres 16, Redis 7, MinIO); `.env.example`
+- [x] `docker-compose.yml` (Postgres 17, Redis 7, MinIO, Mailpit); `.env.example`
 - [ ] GitHub Actions CI skeleton
 - [ ] Build pack available locally outside the repo; `PROTOTYPE_PATH` documented
 

@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **Section 01 (Foundation)**: env loader, pool, migrations 0000–0002, real `/api/health`, flag middleware. Raise CRM PR #1 (`academy-verify`) in parallel. **Docker isn't installed on this machine**, so install Docker Desktop (or point `DATABASE_URL`/`REDIS_URL` at another local Postgres 16 / Redis 7) before S01's migration checks |
+| Next step | **Section 01 (Foundation)**: env loader, pool, migrations 0000–0002, real `/api/health`, flag middleware. Raise CRM PR #1 (`academy-verify`) in parallel. Local DB: this machine already runs a **PostgreSQL 18** service on port 5432 (production is 17). There is **no local Redis**. See the CRM database notes in PROJECT-PLAN §5.3 |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
