@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **S02 (Content seed).** S01 is verified locally (22 Sep): migrations 0000–0002 applied to `academy_dev` (28 tables + 2 views), 22 DB tests pass on `academy_test`, `/api/health` = db:true. Still open for S01: CI green (needs the push) and Redis (S03). Also draft CRM PR #1 (`academy-verify`) before S03 |
+| Next step | **S03 (Auth).** S02 verified locally 22 Sep: seed loads 28 stages / 66 lessons / 231 questions / 34 status rows / 48 recordings / 80 track-visibility rows into `academy_dev`; verifier 20/20 PASS; re-run writes 0 rows; repo-wide canary scan 0 hits. CRM PR #1 (`academy-verify`) is committed locally as `c8322db6` on `sukhendu/academy-verify` in the separate worktree `E:\RRC\CRM-academy-verify` (not pushed). S03 still needs local Redis (Memurai) |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
@@ -33,6 +33,12 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 - Local Postgres 18 service on port 5432 (production is 17; CI tests on 17). Set up once with `node ops/local/setup-local-db.mjs`: logins `academy_owner` (migrations) and `academy_app` (the app), databases `academy_dev` and `academy_test`. Passwords are in the gitignored `.env`.
 - Apply migrations: `npm run migrate -w @fac-academy/server -- --commit --expect-db academy_dev`. DB tests: `MIGRATION_TEST_DB_NAME=academy_test npx vitest run test/db` in `server/`.
 - No local Redis yet (S03).
+
+## Content seed (S02)
+
+- `PROTOTYPE_PATH=<path outside repo> npx tsx ops/seed/seed-content.ts --expect-db academy_dev` (add `--dry-run` to roll back). Verify: `npx tsx ops/seed/verify-seed.ts --expect-db academy_dev`.
+- Migration 0003 adds the DEPARTMENT recording category, department metadata, `stages.sort` and the question upsert key.
+- Leak canaries in `ops/fixtures/leak-canaries.json` are hashes only.
 
 ## Documents
 
