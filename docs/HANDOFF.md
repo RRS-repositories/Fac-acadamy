@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **Finish S01 verification.** The user runs `node ops/local/setup-local-db.mjs` once (asks for the local `postgres` password; creates `academy_owner`, `academy_app`, `academy_dev`, `academy_test`, citext). Then: `npm run migrate -w @fac-academy/server -- --commit --expect-db academy_dev`, list `academy.*` tables, run DB tests with `MIGRATION_TEST_DB_NAME=academy_test`, confirm `/api/health` db:true, write the S01 checklist + note for Brad. Then S02 |
+| Next step | **S02 (Content seed).** S01 is verified locally (22 Sep): migrations 0000–0002 applied to `academy_dev` (28 tables + 2 views), 22 DB tests pass on `academy_test`, `/api/health` = db:true. Still open for S01: CI green (needs the push) and Redis (S03). Also draft CRM PR #1 (`academy-verify`) before S03 |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
@@ -27,6 +27,12 @@
 | pre-push hook | blocks `main`, allows branches |
 
 One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 5-minute install on the slow E: drive. It didn't reproduce in 12 later runs. If it comes back, capture it with `npx vitest run > out.txt 2>&1`.
+
+## Local development
+
+- Local Postgres 18 service on port 5432 (production is 17; CI tests on 17). Set up once with `node ops/local/setup-local-db.mjs`: logins `academy_owner` (migrations) and `academy_app` (the app), databases `academy_dev` and `academy_test`. Passwords are in the gitignored `.env`.
+- Apply migrations: `npm run migrate -w @fac-academy/server -- --commit --expect-db academy_dev`. DB tests: `MIGRATION_TEST_DB_NAME=academy_test npx vitest run test/db` in `server/`.
+- No local Redis yet (S03).
 
 ## Documents
 
