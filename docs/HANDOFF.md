@@ -7,11 +7,11 @@
 | Item | State |
 |---|---|
 | Repo | `E:\RRC\fac-academy`, remote `RRS-repositories/Fac-acadamy`. Only the "first commit" README is on GitHub (`main`) |
-| Current branch | `sukhendu/academy-phase-0` (local only; 2 commits on top of `main`: planning docs, Phase 0 scaffolding) |
+| Current branch | `sukhendu/academy-phase-0` (local only; commits: planning docs, Phase 0, CRM DB alignment, mock login, S01 foundation) |
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **Section 01 (Foundation)**: env loader, pool, migrations 0000–0002, real `/api/health`, flag middleware. Raise CRM PR #1 (`academy-verify`) in parallel. Local DB: this machine already runs a **PostgreSQL 18** service on port 5432 (production is 17). There is **no local Redis**. See the CRM database notes in PROJECT-PLAN §5.3 |
+| Next step | **Finish S01 verification.** The user runs `node ops/local/setup-local-db.mjs` once (asks for the local `postgres` password; creates `academy_owner`, `academy_app`, `academy_dev`, `academy_test`, citext). Then: `npm run migrate -w @fac-academy/server -- --commit --expect-db academy_dev`, list `academy.*` tables, run DB tests with `MIGRATION_TEST_DB_NAME=academy_test`, confirm `/api/health` db:true, write the S01 checklist + note for Brad. Then S02 |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
@@ -48,6 +48,7 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 | D7 | Same Postgres DB as the CRM, schema `academy`, restricted role `academy_app` |
 | D8 | Separate repo (this one); the CRM gets only small endpoint PRs |
 | D9 | Domain working assumption `academy.fastactionclaims.com`; app + API on one origin, host-only session cookie (DNS owner still to confirm) |
+| D12 | (22 Sep) S02 widens `call_recordings.category` for department recordings (e.g. the FOS video) in a new migration; the media column keeps the schema's name `s3_key` (section files say `media_key`) |
 | D11 | New-starter sign-in: **approve first** (Q1). No academy-only login; provisioning is requested before day one |
 | D10 | Layout: `client/` (React SPA) · `server/` (API + worker) · `shared/` (contracts only) · `ops/` · `e2e/` |
 
