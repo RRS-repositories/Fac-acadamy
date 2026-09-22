@@ -1,4 +1,4 @@
-// Integration test: applies 0000-0002 to a THROW-AWAY database and checks the
+// Integration test: applies 0000-0003 to a THROW-AWAY database and checks the
 // result. Runs only when MIGRATION_TEST_DB_NAME is set (CI and the local test
 // database set it). It DROPS the academy schema in that database: never point
 // it at anything that matters.
@@ -49,7 +49,7 @@ function tablesCreatedIn(filename: string): string[] {
 
 const quiet = () => undefined;
 
-describe.skipIf(!TEST_DB)('migrations 0000-0002 on a fresh database', () => {
+describe.skipIf(!TEST_DB)('migrations 0000-0003 on a fresh database', () => {
   let settings: DbSettings;
   let client: pg.Client;
 
@@ -82,6 +82,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0002 on a fresh database', () => {
       '0000_extensions.sql',
       '0001_academy_schema.sql',
       '0002_academy_v2_alignment.sql',
+      '0003_seed_support.sql',
     ]);
   });
 
@@ -152,7 +153,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0002 on a fresh database', () => {
   it('applies nothing on a second run', async () => {
     const res = await applyMigrations({ commit: true, expectDb: TEST_DB, settings, log: quiet });
     expect(res.applied).toEqual([]);
-    expect(res.appliedBefore).toBe(3);
+    expect(res.appliedBefore).toBe(4);
   });
 
   it('dry run on an up-to-date database lists 0 pending', async () => {
