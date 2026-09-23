@@ -90,6 +90,12 @@ export default function TrainingLayout({ currentCode = null, children }) {
         )}
 
         <div className="mt-4 border-t border-white/10 px-6 pt-4 text-[11px] text-white/40">
+          <Link
+            to="/status-guide"
+            className="mb-2.5 block text-[12.5px] font-semibold text-white/65 underline"
+          >
+            Status Guide
+          </Link>
           <button
             type="button"
             onClick={signOut}
