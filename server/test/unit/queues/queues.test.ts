@@ -95,6 +95,19 @@ describe('choosing an implementation', () => {
 
   it('says plainly that the Redis queue is not built yet', () => {
     expect(() => createBullQueue({ redisUrl: 'redis://localhost:6379' })).toThrow(/S08/);
-    expect(() => createJobQueue({ redisUrl: 'redis://localhost:6379' })).toThrow(/S08/);
+  });
+
+  it('falls back to the in-memory queue, loudly, until the Redis one exists', () => {
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.join(' '));
+    try {
+      const queue = createJobQueue({ redisUrl: 'redis://localhost:6379' });
+      expect(queue).toBeDefined();
+      expect(warnings.join(' ')).toMatch(/in-memory queue/i);
+      expect(warnings.join(' ')).toMatch(/lost/i);
+    } finally {
+      console.warn = warn;
+    }
   });
 });
