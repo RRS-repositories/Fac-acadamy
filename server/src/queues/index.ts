@@ -22,5 +22,16 @@ export interface JobQueueOptions {
 export function createJobQueue(options: JobQueueOptions = {}): JobQueue {
   const url = options.redisUrl?.trim();
   if (url === undefined || url === '') return createInMemoryQueue();
-  return createBullQueue({ redisUrl: url });
+  try {
+    return createBullQueue({ redisUrl: url });
+  } catch (err) {
+    // The real queue lands in S08. Until then a configured Redis must not
+    // stop the app from starting: fall back, but say so loudly, because in
+    // production this means queued work would be lost on a restart.
+    console.warn(
+      `[academy-queues] the Redis-backed queue is not available yet (${(err as Error).message}). ` +
+        'Falling back to the in-memory queue: jobs are lost if this process restarts.',
+    );
+    return createInMemoryQueue();
+  }
 }
