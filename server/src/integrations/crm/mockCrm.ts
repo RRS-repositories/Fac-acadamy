@@ -6,7 +6,26 @@ import type { CrmClient, CrmUser, CrmVerifyResult } from './crmClient.js';
 
 const MOCK_PASSWORD = 'dev-password';
 
+// The two `shot.*` accounts exist so automated runs (screenshots, demos) never
+// re-enrol an authenticator on an account a person signs in with: doing that
+// leaves their phone holding a dead QR code.
 export const MOCK_CRM_ACCOUNTS: readonly CrmUser[] = Object.freeze([
+  {
+    id: 900006,
+    email: 'shot.agent@example.com',
+    fullName: 'Screenshot Agent',
+    role: 'Customer Service',
+    isApproved: true,
+    locked: false,
+  },
+  {
+    id: 900007,
+    email: 'shot.dept@example.com',
+    fullName: 'Screenshot Department',
+    role: 'Admin',
+    isApproved: true,
+    locked: false,
+  },
   {
     id: 900001,
     email: 'trainee.one@example.com',

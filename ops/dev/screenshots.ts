@@ -92,14 +92,14 @@ interface Subject {
 
 /** An agent track (levels) and a department track: the two dashboard shapes. */
 const AGENT: Subject = {
-  email: 'trainee.two@example.com',
+  email: 'shot.agent@example.com',
   track: 'CS',
   prototypeTrack: 'Customer Service',
   prototypeName: 'Jordan Avery',
   prototypeEmail: 'jordan.avery@example.com',
 };
 const DEPARTMENT: Subject = {
-  email: 'trainee.one@example.com',
+  email: 'shot.dept@example.com',
   track: 'ADMIN',
   prototypeTrack: 'Admin',
   prototypeName: 'Morgan Ellis',
