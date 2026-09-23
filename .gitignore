@@ -38,6 +38,9 @@ build-pack/
 scratch/
 tmp/
 
+# --- Personal notes, not part of the project --------------------------------
+worklog.txt
+
 # --- Editors and OS ---------------------------------------------------------
 .DS_Store
 Thumbs.db
