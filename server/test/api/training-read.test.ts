@@ -185,7 +185,13 @@ describe.skipIf(!ready)('S04 training read side', () => {
   it('tells a trainee with no track that they are waiting for one (D13)', async () => {
     const session = await trainee(null);
     const body = await track(session);
-    expect(body).toEqual({ track: null, waitingForTrack: true, stages: [] });
+    expect(body).toEqual({
+      track: null,
+      waitingForTrack: true,
+      stages: [],
+      levels: [],
+      depts: [],
+    });
 
     // And no stage opens for them, without saying which stages exist.
     const res = await get(h, '/api/stage/s1', session.cookie).expect(403);

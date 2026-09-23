@@ -1,0 +1,196 @@
+/*
+ * Styling for lesson HTML that the API serves. The server's markup carries the
+ * prototype's class names (callout, dt, doc, redact, hl, ex-tag, doc-tabs), so
+ * these rules are ported from the prototype's stylesheet — rules and colours
+ * only. No lesson text, question, answer, name or email lives in this repo.
+ *
+ * Everything is scoped under .lesson-body so it cannot leak into app chrome.
+ * The custom properties come from the @theme block in src/styles/index.css.
+ */
+
+.lesson-body h2 {
+  font-size: 21px;
+  margin-bottom: 4px;
+}
+.lesson-body .sub {
+  color: var(--color-muted);
+  font-size: 13.5px;
+  margin-bottom: 20px;
+}
+.lesson-body h3 {
+  font-size: 16px;
+  margin: 24px 0 10px;
+  padding-top: 4px;
+}
+.lesson-body p {
+  margin-bottom: 13px;
+  font-size: 14.5px;
+}
+.lesson-body ul,
+.lesson-body ol {
+  margin: 0 0 14px 22px;
+  font-size: 14.5px;
+  list-style: revert;
+}
+.lesson-body li {
+  margin-bottom: 7px;
+}
+.lesson-body b {
+  font-weight: 700;
+  color: var(--color-navy);
+}
+
+/* Callouts */
+.lesson-body .callout {
+  border-radius: 10px;
+  padding: 15px 18px;
+  margin: 16px 0;
+  font-size: 14px;
+  border-left: 4px solid;
+}
+.lesson-body .callout b:first-child {
+  display: block;
+  margin-bottom: 4px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.lesson-body .callout.key {
+  background: var(--color-orange-soft);
+  border-color: var(--color-orange);
+}
+.lesson-body .callout.warn {
+  background: var(--color-red-soft);
+  border-color: var(--color-red);
+}
+.lesson-body .callout.good {
+  background: var(--color-green-soft);
+  border-color: var(--color-green);
+}
+.lesson-body .callout.info {
+  background: #ebf2fa;
+  border-color: var(--color-navy-mid);
+}
+
+/* Data tables */
+.lesson-body table.dt {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 13.5px;
+}
+.lesson-body table.dt th {
+  background: var(--color-navy);
+  color: #fff;
+  text-align: left;
+  padding: 9px 13px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+}
+.lesson-body table.dt td {
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--color-line);
+}
+.lesson-body table.dt tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+/* Practice-document replicas (DSAR lessons) */
+.lesson-body .doc {
+  border: 1.5px solid #9aa6b2;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12.5px;
+  margin: 12px 0;
+  overflow: hidden;
+}
+.lesson-body .doc-head {
+  background: #1b3b6f;
+  color: #fff;
+  padding: 9px 14px;
+  font-weight: 700;
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.lesson-body .doc-sec {
+  background: #e9edf2;
+  padding: 6px 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #33475b;
+  border-top: 1px solid #c9d2dc;
+}
+.lesson-body .doc-row {
+  display: flex;
+  gap: 10px;
+  padding: 5px 14px;
+  border-top: 1px solid #eef1f5;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.lesson-body .doc-row .k {
+  width: 210px;
+  color: #5b6b7c;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.lesson-body .doc-row .v {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.lesson-body .redact {
+  display: inline-block;
+  background: var(--color-ink);
+  border-radius: 2px;
+  color: transparent;
+  user-select: none;
+  padding: 0 4px;
+  letter-spacing: 0;
+}
+.lesson-body .hl {
+  background: var(--color-orange-soft);
+  outline: 2px solid var(--color-orange);
+  outline-offset: 1px;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.lesson-body .ex-tag {
+  display: inline-block;
+  background: var(--color-orange);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  letter-spacing: 0.05em;
+  vertical-align: middle;
+}
+
+/* Replica tabs. The panels are toggled by LessonBody's delegated handler. */
+.lesson-body .doc-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0 2px;
+}
+.lesson-body .doc-tabs button {
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  border: 1.5px solid var(--color-line);
+  background: #fff;
+  color: var(--color-navy);
+  cursor: pointer;
+}
+.lesson-body .doc-tabs button.on {
+  background: var(--color-navy);
+  color: #fff;
+  border-color: var(--color-navy);
+}

@@ -4,6 +4,37 @@ import { MANAGER, QR_DATA_URL, STAFF, callsTo, mockFetch, renderApp } from './he
 
 const ENROL_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 
+// After sign-in the trainee lands on the dashboard, which reads /api/track
+// (S05). One invented stage is enough for these sign-in checks.
+const TRACK = {
+  'GET /api/track': [
+    200,
+    {
+      track: 'CS',
+      waitingForTrack: false,
+      stages: [
+        {
+          code: 'a1',
+          title: 'Alpha stage',
+          blurb: 'A test blurb.',
+          displayNum: '1',
+          level: 1,
+          dept: null,
+          position: 1,
+          state: 'available',
+          pct: 0,
+          attempts: 0,
+          best: null,
+          passMark: 80,
+          lessonCount: 1,
+          recordingCount: 0,
+          recordingsWithMedia: 0,
+        },
+      ],
+    },
+  ],
+};
+
 async function openLogin(path = '/login') {
   renderApp(path);
   await screen.findByRole('heading', { name: 'Sign in to start training' });
@@ -45,6 +76,7 @@ describe('Login', () => {
 
   it('returning user: password, then code, then lands on the home page', async () => {
     const fetchMock = mockFetch({
+      ...TRACK,
       'POST /api/auth/login': [200, { next: 'challenge' }],
       'POST /api/auth/mfa': [200, { me: STAFF }],
     });
@@ -65,7 +97,9 @@ describe('Login', () => {
     expect(screen.getByLabelText('6-digit code')).toHaveValue('123456');
     fireEvent.click(screen.getByRole('button', { name: 'Verify and sign in' }));
 
-    expect(await screen.findByRole('heading', { name: 'Welcome, Trainee' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Customer Service')).toBeInTheDocument();
     const [[, mfaInit]] = callsTo(fetchMock, 'POST', '/api/auth/mfa');
     expect(mfaInit.credentials).toBe('same-origin');
@@ -88,6 +122,7 @@ describe('Login', () => {
 
   it('ignores a ?next= that points off-site', async () => {
     mockFetch({
+      ...TRACK,
       'POST /api/auth/login': [200, { next: 'challenge' }],
       'POST /api/auth/mfa': [200, { me: STAFF }],
     });
@@ -95,11 +130,14 @@ describe('Login', () => {
     signIn();
     await screen.findByRole('heading', { name: 'Enter your authenticator code' });
     await enterCode('Verify and sign in');
-    expect(await screen.findByRole('heading', { name: 'Welcome, Trainee' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
   });
 
   it('first sign-in shows the real QR image, the grouped key and the 3 steps', async () => {
     mockFetch({
+      ...TRACK,
       'POST /api/auth/login': [
         200,
         {
@@ -130,7 +168,9 @@ describe('Login', () => {
     expect(screen.getByText('Enter the 6-digit code the app shows.')).toBeInTheDocument();
 
     await enterCode('Turn on and sign in');
-    expect(await screen.findByRole('heading', { name: 'Welcome, Trainee' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
   });
 
   it.each([
@@ -189,9 +229,11 @@ describe('Login', () => {
   });
 
   it('redirects to / when already signed in', async () => {
-    mockFetch({ 'GET /api/me': [200, { me: STAFF }] });
+    mockFetch({ ...TRACK, 'GET /api/me': [200, { me: STAFF }] });
     renderApp('/login');
-    expect(await screen.findByRole('heading', { name: 'Welcome, Trainee' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.queryByRole('heading', { name: 'Sign in to start training' })).toBeNull(),
     );

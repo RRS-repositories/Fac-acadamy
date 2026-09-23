@@ -15,6 +15,7 @@ import { readLesson } from './lessons.js';
 import { createQuizRouter } from './quiz.routes.js';
 import type { TrainingDeps } from './repo.js';
 import { buildStage } from './stages.js';
+import { statusGuideRouter } from './statusGuide.js';
 import { buildTrack } from './track.js';
 
 // The training API (S04). Every route here is behind requireAuth (mounted in
@@ -104,6 +105,9 @@ export function trainingRouter(deps: TrainingDeps): Router {
   // the same contract file. Mounted after GET /stage/:code, which it must not
   // shadow.
   router.use('/stage/:code/quiz', createQuizRouter(deps));
+
+  // GET /api/status-guide (S05): firm-wide reference rows, no gate() needed.
+  router.use('/status-guide', statusGuideRouter(deps));
 
   return router;
 }

@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **S05 (Front-end)** — the React port of the prototype: dashboard, stage view, lesson reader, quiz and result screens, Status Guide, DSAR tabs, scroll rules, accessibility, screenshot pairs for Brad. S04 verified locally 23 Sep: 333 tests; 9-track sweep zero diff; 387 locked requests refused; live walk-through (lesson gate, failed attempt hides answers, pass reveals them and unlocks the next stage) |
+| Next step | **S06 (Media)** — extract the 6 call MP3s straight to private S3, upload the FOS video after Brad's PII review, signed URLs + a Range-aware stream proxy, no-seek players, listen coverage, and flipping `RECORDINGS_GATE_ENABLED` on. S05 verified locally 23 Sep: 372 tests; 8 screenshot pairs captured outside the repo for Brad |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
@@ -45,6 +45,11 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 - `academy_dev` (development), `academy_test` (DB-backed tests, holds the seeded content), `academy_migrations_test` (migration suite only — it drops the academy schema, so it must stay separate).
 - Run the tests with `MIGRATION_TEST_DB_NAME=academy_test`, `MIGRATIONS_TEST_DB_NAME=academy_migrations_test` and a real `PROTOTYPE_PATH` (all three are in the local `.env`).
 - Per-track dev accounts: `npx tsx ops/dev/seed-test-accounts.ts --expect-db academy_dev` (9 tracks + a manager, invented @example.com). Evidence sweep: `npx tsx ops/dev/track-sweep.ts --expect-db academy_dev`.
+
+## Screenshots for Brad
+
+- `npx tsx ops/dev/screenshots.ts` captures 8 app/prototype pairs into `E:\RRC\Tasks Files\T-22-09\screenshots\` — **outside the repo**, because the prototype screens show real staff names.
+- It needs both dev servers running and `npx playwright install chromium` once.
 
 ## Documents
 

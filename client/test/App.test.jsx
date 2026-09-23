@@ -2,6 +2,32 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, screen } from '@testing-library/react';
 import { MANAGER, STAFF, callsTo, mockFetch, renderApp } from './helpers.jsx';
 
+// The dashboard at "/" reads /api/track (S05). One invented stage is enough
+// for the routing and auth checks in this file.
+const TRACK = {
+  track: 'CS',
+  waitingForTrack: false,
+  stages: [
+    {
+      code: 'a1',
+      title: 'Alpha stage',
+      blurb: 'A test blurb.',
+      displayNum: '1',
+      level: 1,
+      dept: null,
+      position: 1,
+      state: 'available',
+      pct: 0,
+      attempts: 0,
+      best: null,
+      passMark: 80,
+      lessonCount: 1,
+      recordingCount: 0,
+      recordingsWithMedia: 0,
+    },
+  ],
+};
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -9,9 +35,14 @@ afterEach(() => {
 
 describe('App routing and auth guards', () => {
   it('home shows the first name, the track label and a sign-out button', async () => {
-    const fetchMock = mockFetch({ 'GET /api/me': [200, { me: STAFF }] });
+    const fetchMock = mockFetch({
+      'GET /api/me': [200, { me: STAFF }],
+      'GET /api/track': [200, TRACK],
+    });
     renderApp('/');
-    expect(await screen.findByRole('heading', { name: 'Welcome, Trainee' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Customer Service')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
     const [[, init]] = callsTo(fetchMock, 'GET', '/api/me');
@@ -62,7 +93,10 @@ describe('App routing and auth guards', () => {
   it('no track yet: shows the waiting screen, then the home page once a track is set', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let me = { ...STAFF, track: null };
-    const fetchMock = mockFetch({ 'GET /api/me': () => [200, { me }] });
+    const fetchMock = mockFetch({
+      'GET /api/me': () => [200, { me }],
+      'GET /api/track': [200, TRACK],
+    });
     renderApp('/');
     expect(await screen.findByRole('heading', { name: "You're signed in." })).toBeInTheDocument();
     expect(
@@ -75,7 +109,9 @@ describe('App routing and auth guards', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
-    expect(await screen.findByRole('heading', { name: 'Welcome, Trainee' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Sales')).toBeInTheDocument();
     expect(callsTo(fetchMock, 'GET', '/api/me').length).toBeGreaterThanOrEqual(2);
   });
@@ -83,6 +119,7 @@ describe('App routing and auth guards', () => {
   it('sign out calls the logout endpoint and returns to the sign-in page', async () => {
     const fetchMock = mockFetch({
       'GET /api/me': [200, { me: STAFF }],
+      'GET /api/track': [200, TRACK],
       'POST /api/auth/logout': [204],
     });
     renderApp('/');
@@ -99,10 +136,11 @@ describe('App routing and auth guards', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = mockFetch({
       'GET /api/me': [200, { me: STAFF }],
+      'GET /api/track': [200, TRACK],
       'POST /api/auth/heartbeat': [204],
     });
     renderApp('/');
-    await screen.findByRole('heading', { name: 'Welcome, Trainee' });
+    await screen.findByRole('heading', { name: 'Welcome back, Trainee' });
     expect(callsTo(fetchMock, 'POST', '/api/auth/heartbeat')).toHaveLength(0);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);

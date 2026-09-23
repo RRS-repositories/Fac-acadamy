@@ -45,10 +45,36 @@ export type TrackStage = z.infer<typeof TrackStageSchema>;
  * GET /api/track. A trainee with no track yet (D13) gets
  * `{ track: null, waitingForTrack: true, stages: [] }`.
  */
+/** Level and department headings, as worded in the approved prototype. */
+export const TrackLevelSchema = z.object({
+  level: z.number().int(),
+  name: z.string(),
+  weeks: z.string().nullable(),
+  accomplishment: z.string(),
+  description: z.string().nullable(),
+});
+export type TrackLevel = z.infer<typeof TrackLevelSchema>;
+
+export const TrackDeptSchema = z.object({
+  code: z.string(),
+  name: z.string(),
+  icon: z.string().nullable(),
+  accomplishment: z.string().nullable(),
+  description: z.string().nullable(),
+});
+export type TrackDept = z.infer<typeof TrackDeptSchema>;
+
 export const TrackResponseSchema = z.object({
   track: z.enum(TRACK_CODES as [TrackCode, ...TrackCode[]]).nullable(),
   waitingForTrack: z.boolean(),
   stages: z.array(TrackStageSchema),
+  /**
+   * Headings for the sections the trainee can see (empty while waiting).
+   * They default to empty so a browser running a newer bundle against a
+   * briefly older API still renders, just with plain "Level N" headings.
+   */
+  levels: z.array(TrackLevelSchema).default([]),
+  depts: z.array(TrackDeptSchema).default([]),
 });
 export type TrackResponse = z.infer<typeof TrackResponseSchema>;
 
