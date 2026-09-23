@@ -1,4 +1,4 @@
-// Integration test: applies 0000-0005 to a THROW-AWAY database and checks the
+// Integration test: applies 0000-0007 to a THROW-AWAY database and checks the
 // result. Runs only when MIGRATION_TEST_DB_NAME is set (CI and the local test
 // database set it). It DROPS the academy schema in that database: never point
 // it at anything that matters.
@@ -52,7 +52,7 @@ function tablesCreatedIn(filename: string): string[] {
 
 const quiet = () => undefined;
 
-describe.skipIf(!TEST_DB)('migrations 0000-0005 on a fresh database', () => {
+describe.skipIf(!TEST_DB)('migrations 0000-0007 on a fresh database', () => {
   let settings: DbSettings;
   let client: pg.Client;
 
@@ -88,6 +88,8 @@ describe.skipIf(!TEST_DB)('migrations 0000-0005 on a fresh database', () => {
       '0003_seed_support.sql',
       '0004_auth_support.sql',
       '0005_media.sql',
+      '0006_notifications.sql',
+      '0007_certificates.sql',
     ]);
   });
 
@@ -139,6 +141,71 @@ describe.skipIf(!TEST_DB)('migrations 0000-0005 on a fresh database', () => {
     }
   });
 
+  it('renames certificates.s3_key to media_key and adds the file facts (0007)', async () => {
+    const { rows } = await client.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'academy' AND table_name = 'certificates'
+        ORDER BY column_name`,
+    );
+    const columns = rows.map((r) => r.column_name);
+    expect(columns).toContain('media_key');
+    expect(columns).not.toContain('s3_key');
+    for (const added of [
+      'byte_size',
+      'checksum_sha256',
+      'content_type',
+      'rendered_at',
+      'issued_by',
+    ]) {
+      expect(columns).toContain(added);
+    }
+  });
+
+  it('refuses a certificate key that could escape the media folder (0007)', async () => {
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO trainees (full_name, email, track)
+         VALUES ('Cert Holder', 'cert.holder@example.com', 'ADMIN')`,
+      );
+      const cert = async (publicId: string, key: string | null) =>
+        client.query(
+          `INSERT INTO certificates
+             (public_id, trainee_id, kind, dept, track_code, holder_name, media_key)
+           SELECT $1, t.id, 'DEPT', 'ADMIN', 'ADMIN', 'Cert Holder', $2
+             FROM trainees t WHERE t.email = 'cert.holder@example.com'`,
+          [publicId, key],
+        );
+      await cert('aaaaaaaaaaaaaaaaaaaaaa', 'academy/certs/aaaaaaaaaaaaaaaaaaaaaa.pdf');
+      for (const bad of [
+        'academy/certs/../../etc/passwd',
+        '/etc/passwd',
+        'academy\\certs\\x.pdf',
+        'academy/certs/',
+        'academy/certs/x y.pdf',
+      ]) {
+        await client.query('SAVEPOINT bad_key');
+        await expect(cert('bbbbbbbbbbbbbbbbbbbbbb', bad)).rejects.toMatchObject({ code: '23514' });
+        await client.query('ROLLBACK TO SAVEPOINT bad_key');
+      }
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('keeps public_id unique and indexed (0007)', async () => {
+    const { rows } = await client.query<{ n: string }>(
+      `SELECT count(*) AS n
+         FROM pg_index i
+         JOIN pg_class c     ON c.oid = i.indrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY (i.indkey)
+        WHERE n.nspname = 'academy' AND c.relname = 'certificates'
+          AND i.indisunique AND a.attname = 'public_id' AND i.indnatts = 1`,
+    );
+    expect(Number(rows[0]?.n)).toBeGreaterThan(0);
+  });
+
   it('creates every table named in 0001 (19) and the 0002 tables', async () => {
     const from0001 = tablesCreatedIn('0001_academy_schema.sql');
     expect(from0001).toHaveLength(19);
@@ -148,7 +215,15 @@ describe.skipIf(!TEST_DB)('migrations 0000-0005 on a fresh database', () => {
        WHERE table_schema = 'academy' AND table_type = 'BASE TABLE'`,
     );
     const actual = rows.map((r) => r.table_name).sort();
-    expect(actual).toEqual([...from0001, ...NEW_TABLES_0002, 'schema_migrations'].sort());
+    expect(actual).toEqual(
+      [
+        ...from0001,
+        ...NEW_TABLES_0002,
+        'notifications_sent',
+        'certificate_emails',
+        'schema_migrations',
+      ].sort(),
+    );
   });
 
   it('creates both views, and they run', async () => {
@@ -206,7 +281,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0005 on a fresh database', () => {
   it('applies nothing on a second run', async () => {
     const res = await applyMigrations({ commit: true, expectDb: TEST_DB, settings, log: quiet });
     expect(res.applied).toEqual([]);
-    expect(res.appliedBefore).toBe(6);
+    expect(res.appliedBefore).toBe(8);
   });
 
   it('dry run on an up-to-date database lists 0 pending', async () => {

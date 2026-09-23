@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { DEFAULT_PASS_MARK, TRACK_CODES } from '@fac-academy/shared';
 import type { StageLesson, StageRecording, TrackCode } from '@fac-academy/shared';
+import type { CertificateIssuer } from '../../certs/issue.js';
 import type { RequireAuthDeps } from '../../middleware/auth.js';
 import type { Producers } from '../../queues/producers.js';
 
@@ -30,6 +31,13 @@ export interface TrainingDeps extends RequireAuthDeps {
    * Redis still works and nothing is silently dropped on the floor.
    */
   producers?: Producers;
+  /**
+   * S09: the certificate issuer. When a quiz pass completes a level or a
+   * department academy, the quiz router issues the certificate right after the
+   * commit. Optional: without it the pass still records and the certificate
+   * job is still queued, so the worker produces the certificate instead.
+   */
+  certificates?: CertificateIssuer;
   /** Injectable clock, for tests. Defaults to Date.now. */
   now?: () => number;
 }

@@ -24,11 +24,28 @@ export const QUEUE_NAMES = {
   emails: 'emails',
   /** Certificate rendering (S09). */
   certificates: 'certificates',
+  /**
+   * Where a job goes when it has used up every attempt (S08). Nothing
+   * consumes this queue on purpose: its jobs sit in `waiting` so they can be
+   * read, counted and re-driven by hand. See deadLetter.ts.
+   */
+  deadLetter: 'dead-letter',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
 export const ALL_QUEUE_NAMES: readonly QueueName[] = Object.values(QUEUE_NAMES);
+
+/** The one queue that is a parking bay, not work. */
+export const DEAD_LETTER_QUEUE = QUEUE_NAMES.deadLetter;
+
+/**
+ * The queues a worker actually processes: everything except the dead-letter
+ * parking bay. Starting a Worker on dead-letter would drain the evidence.
+ */
+export const WORK_QUEUE_NAMES: readonly QueueName[] = ALL_QUEUE_NAMES.filter(
+  (name) => name !== DEAD_LETTER_QUEUE,
+);
 
 /** Throws unless `name` is a legal BullMQ queue name (no ':', not empty). */
 export function assertQueueName(name: string): void {

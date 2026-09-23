@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="UTF-8" />
+    <title>FAC Academy certificate</title>
+    <style>
+      /*
+       * The certificate page, rendered to PDF by Playwright's Chromium
+       * (server/src/certs/render.ts). It is A4 landscape and it is the only
+       * place the printed layout is described.
+       *
+       * Every {{token}} is replaced by render.ts with an HTML-escaped value.
+       * No training wording lives in this file: the level name, the academy
+       * name and the accomplishment line all arrive as tokens, read from the
+       * database at render time.
+       *
+       * The two @font-face blocks are filled with base64 woff2 data URIs from
+       * templates/certificate/fonts, so the page needs no network at all: the
+       * PDF looks the same on a laptop, in CI and on a server with no way out
+       * to fonts.googleapis.com.
+       */
+      {{fontFaces}}
+
+      /* The app's tokens, copied from client/src/styles/index.css. */
+      :root {
+        --navy: #16324f;
+        --navy-deep: #0e2338;
+        --navy-mid: #1f4e79;
+        --orange: #e8713a;
+        --orange-soft: #fdf0e8;
+        --ink: #1c2430;
+        --muted: #5b6b7c;
+        --line: #dde4ec;
+      }
+
+      @page {
+        size: A4 landscape;
+        margin: 0;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 297mm;
+        height: 210mm;
+      }
+
+      body {
+        font-family: 'Inter', system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        color: var(--ink);
+        background: #ffffff;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      .sheet {
+        position: relative;
+        width: 297mm;
+        height: 210mm;
+        padding: 14mm;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* The navy wash down the left edge, the app's sidebar gradient. */
+      .spine {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 12mm;
+        height: 210mm;
+        background: linear-gradient(180deg, var(--navy-deep), var(--navy));
+      }
+
+      .frame {
+        position: relative;
+        flex: 1;
+        border: 1.5px solid var(--line);
+        border-radius: 5mm;
+        padding: 12mm 14mm 10mm 20mm;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* The orange ring the app draws behind its hero panel. */
+      .ring {
+        position: absolute;
+        right: -34mm;
+        bottom: -46mm;
+        width: 104mm;
+        height: 104mm;
+        border: 14mm solid rgba(232, 113, 58, 0.09);
+        border-radius: 50%;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 4mm;
+      }
+
+      .brand .mark {
+        width: 5mm;
+        height: 5mm;
+        border-radius: 1.2mm;
+        background: var(--orange);
+      }
+
+      .brand .name {
+        font-family: 'Outfit', system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-weight: 700;
+        font-size: 19pt;
+        color: var(--navy);
+        letter-spacing: 0.01em;
+      }
+
+      .brand .sub {
+        margin-left: auto;
+        font-size: 8.5pt;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .body {
+        position: relative;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .eyebrow {
+        font-size: 10pt;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--orange);
+        margin-bottom: 5mm;
+      }
+
+      .holder {
+        font-family: 'Outfit', system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-weight: 700;
+        font-size: 40pt;
+        line-height: 1.1;
+        color: var(--navy);
+        margin: 0 0 4mm;
+        /* A long name shrinks rather than pushing the layout about. */
+        overflow-wrap: break-word;
+      }
+
+      .rule {
+        width: 46mm;
+        height: 1.4mm;
+        border-radius: 1mm;
+        background: var(--orange);
+        margin-bottom: 6mm;
+      }
+
+      .lead {
+        font-size: 12pt;
+        color: var(--muted);
+        margin: 0 0 2.5mm;
+      }
+
+      .title {
+        font-family: 'Outfit', system-ui, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-weight: 700;
+        font-size: 21pt;
+        line-height: 1.25;
+        color: var(--navy-mid);
+        margin: 0;
+        max-width: 190mm;
+      }
+
+      .accomplishment {
+        display: inline-block;
+        /* The body is a flex column, so without this the pill would stretch
+           the full width of the sheet instead of hugging its own words. */
+        align-self: flex-start;
+        margin-top: 6mm;
+        padding: 3mm 6mm;
+        border-radius: 999px;
+        background: var(--orange-soft);
+        color: #b8552a;
+        font-size: 11.5pt;
+        font-weight: 600;
+        max-width: 190mm;
+      }
+
+      .footer {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 8mm;
+        border-top: 1px solid var(--line);
+        padding-top: 5mm;
+        margin-top: 8mm;
+      }
+
+      .fact {
+        min-width: 0;
+        /* The three short facts keep to one line; only the URL may wrap. */
+        white-space: nowrap;
+      }
+
+      .fact .label {
+        font-size: 7.5pt;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-bottom: 1.5mm;
+      }
+
+      .fact .value {
+        font-size: 10.5pt;
+        color: var(--ink);
+        overflow-wrap: anywhere;
+      }
+
+      .fact.id .value {
+        font-family: 'Consolas', 'Courier New', monospace;
+        letter-spacing: 0.02em;
+      }
+
+      .fact.verify {
+        margin-left: auto;
+        text-align: right;
+        max-width: 120mm;
+        white-space: normal;
+      }
+
+      .fact.verify .value {
+        color: var(--navy-mid);
+        font-weight: 600;
+        font-size: 9pt;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="spine"></div>
+      <div class="frame">
+        <div class="ring"></div>
+
+        <header class="brand">
+          <span class="mark"></span>
+          <span class="name">FAC Academy</span>
+          <span class="sub">Fast Action Claims</span>
+        </header>
+
+        <main class="body">
+          <p class="eyebrow">Certificate of completion</p>
+          <h1 class="holder">{{holderName}}</h1>
+          <div class="rule"></div>
+          <p class="lead">has completed</p>
+          <p class="title">{{title}}</p>
+          {{accomplishmentBlock}}
+        </main>
+
+        <footer class="footer">
+          <div class="fact">
+            <div class="label">Programme</div>
+            <div class="value">{{trackLabel}}</div>
+          </div>
+          <div class="fact">
+            <div class="label">Issued</div>
+            <div class="value">{{issuedDate}}</div>
+          </div>
+          <div class="fact id">
+            <div class="label">Certificate id</div>
+            <div class="value">{{publicId}}</div>
+          </div>
+          <div class="fact verify">
+            <div class="label">Verify this certificate</div>
+            <div class="value">{{verifyUrl}}</div>
+          </div>
+        </footer>
+      </div>
+    </div>
+  </body>
+</html>

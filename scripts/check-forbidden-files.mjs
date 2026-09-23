@@ -14,6 +14,10 @@ const MAX_HTML_BYTES = 1 * MB;
 
 const MEDIA_EXT = new Set(['.mp3', '.mp4', '.wav', '.m4a', '.mov', '.webm']);
 const EXPORT_EXT = new Set(['.xlsx', '.xls', '.csv', '.dump']);
+// S09: a certificate PDF carries a real person's name. They are generated on
+// the server, stored under MEDIA_ROOT and streamed by the API — one must never
+// be committed, whether it came out of a test run or a manual check.
+const GENERATED_EXT = new Set(['.pdf']);
 const PUBLIC_ALLOWED_EXT = new Set([
   // images
   '.png',
@@ -70,6 +74,9 @@ function problemsFor(root, file) {
   }
   if (EXPORT_EXT.has(ext)) {
     problems.push('spreadsheet or data export: these must not be committed');
+  }
+  if (GENERATED_EXT.has(ext)) {
+    problems.push('PDF: certificates are generated and stored outside the repo, never committed');
   }
   if (size !== null && size > MAX_FILE_BYTES) {
     problems.push(`file over 5 MB (${(size / MB).toFixed(1)} MB)`);

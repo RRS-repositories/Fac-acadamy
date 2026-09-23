@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg';
 import { QuizSubmitRequestSchema, isPass } from '@fac-academy/shared';
 import type { QuizQuestion, QuizResponse, QuizResult, TrackCode } from '@fac-academy/shared';
 import { authOf } from '../../middleware/auth.js';
+import { issueCertificatesForPass } from '../../certs/onPass.js';
 import { actor, writeAudit } from '../audit/audit.js';
 import { createInMemoryQueue } from '../../queues/queue.js';
 import { createProducers } from '../../queues/producers.js';
@@ -36,7 +37,10 @@ import type { Db, StageRow, TrainingDeps } from './repo.js';
  * so routes.ts can pass its own deps straight through, but a test does not
  * have to build a session manager to grade a quiz.
  */
-export type QuizRouterDeps = Pick<TrainingDeps, 'db' | 'stage1AuthRequired' | 'producers'>;
+export type QuizRouterDeps = Pick<
+  TrainingDeps,
+  'db' | 'stage1AuthRequired' | 'producers' | 'certificates'
+>;
 
 interface StageQuizMeta {
   quizId: number;
@@ -287,6 +291,29 @@ export function createQuizRouter(deps: QuizRouterDeps): Router {
         await producers.enqueueDeptNotify({
           traineeId,
           dept: outcome.dept,
+          track: allowed.track,
+        });
+      }
+      // S09: the certificate for whatever this pass completed. Issued in the
+      // request so it is ready when the page reloads, and queued as well so
+      // the worker composes its email (and repairs a failed render). It never
+      // throws: a certificate problem must not turn a passed quiz into a 500.
+      await issueCertificatesForPass({
+        issuer: deps.certificates ?? null,
+        producers,
+        traineeId,
+        track: allowed.track,
+        level: outcome.level,
+        dept: outcome.dept,
+      });
+      if (!result.passed) {
+        // Every fail is enqueued; the worker counts the streak against the
+        // database and sends ONE message on the third (S08 checklist), so a
+        // request never has to know whether it was the third one.
+        await producers.enqueueStageFailNotify({
+          traineeId,
+          stageId: allowed.stage.id,
+          attemptId: result.attemptId,
           track: allowed.track,
         });
       }

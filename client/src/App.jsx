@@ -9,6 +9,8 @@ import ManagerHome from './pages/manager/ManagerHome.jsx';
 import StuckList from './pages/manager/StuckList.jsx';
 import TraineeDetail from './pages/manager/TraineeDetail.jsx';
 import TrackPreview from './pages/manager/TrackPreview.jsx';
+import MyCertificates from './pages/certs/MyCertificates.jsx';
+import VerifyCertificate from './pages/certs/VerifyCertificate.jsx';
 import NotFound from './pages/NotFound.jsx';
 import Dashboard from './pages/training/Dashboard.jsx';
 import Lesson from './pages/training/Lesson.jsx';
@@ -109,6 +111,18 @@ export default function App() {
               </RequireAuth>
             }
           />
+          {/* S09 certificates. "My certificates" needs a sign-in; the check
+              page deliberately does NOT — anyone holding a certificate can
+              open the address printed on it. */}
+          <Route
+            path="/certificates"
+            element={
+              <RequireAuth requireTrack={false}>
+                <MyCertificates />
+              </RequireAuth>
+            }
+          />
+          <Route path="/verify/:publicId" element={<VerifyCertificate />} />
           <Route path="/login" element={<Login />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

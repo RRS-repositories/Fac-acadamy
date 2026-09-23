@@ -29,10 +29,19 @@ export const AUDIT_EVENTS = [
   'STAGE_PASS',
   'LEVEL_PASS',
   'DEPT_PASS',
+  // S09 certificates: one row when a certificate is created (never on a
+  // re-render), and one for every PDF download, by the holder or a manager.
+  'CERT_ISSUED',
+  'CERT_DOWNLOAD',
   // S07 management dashboard: one summary row per view, one row per action.
   'MANAGER_VIEW',
   'MANAGER_PREVIEW',
   'EXPORT_CSV',
+  // S08 notifications. SHADOW MODE: the message was composed and recorded but
+  // deliberately NOT sent — no email provider has been chosen (Mattermost was
+  // dropped, there is no AWS). The payload carries the kind, the ref, the
+  // subject and how many recipients were resolved; never an address.
+  'NOTIFICATION_SHADOW',
 ] as const;
 export type AuditEventType = (typeof AUDIT_EVENTS)[number];
 

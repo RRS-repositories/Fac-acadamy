@@ -12,8 +12,11 @@
 // The media key is a technical file name under academy/media/, not client
 // data; the consumer needs it to read the object back out of the store.
 
+import { consoleLogger } from '../queues/logging.js';
+import type { QueueLogger } from '../queues/logging.js';
 import { QUEUE_NAMES } from '../queues/names.js';
 import type { JobQueue } from '../queues/queue.js';
+import type { JobHandler } from '../queues/runtime.js';
 
 /** Job names inside the transcription queue. */
 export const TRANSCRIPTION_JOBS = {
@@ -78,5 +81,47 @@ export function createMediaProducers(queue: JobQueue): MediaProducers {
         attempts: 3,
       });
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Consumers.
+//
+// Speech-to-text and AI question drafting are POST-LAUNCH (there is no
+// transcription provider and no model chosen, and every AI question would need
+// a manager to approve it before it went live). The jobs are still produced
+// today, by the manager upload endpoint and by ops/media/ingest-media.ts.
+//
+// So these handlers are deliberate no-ops: they log what arrived and complete.
+// The alternative — no worker on those queues — would leave every upload's
+// follow-up sitting in `waiting` for months, which looks like a broken queue
+// in every dashboard and hides a real backlog when the pipelines do land.
+// ---------------------------------------------------------------------------
+
+/** TODO (post-launch): call the speech-to-text provider and store the transcript. */
+export function createTranscriptionHandler(
+  logger: QueueLogger = consoleLogger('academy-worker'),
+): JobHandler {
+  return (job) => {
+    const data = job.data as TranscriptionJob;
+    logger.info(
+      `transcription: recording ${String(data.recordingId)} accepted and skipped ` +
+        '(no speech-to-text provider yet; post-launch)',
+    );
+    return Promise.resolve();
+  };
+}
+
+/** TODO (post-launch): draft questions from the transcript, as DRAFT + inactive. */
+export function createQuestionGenHandler(
+  logger: QueueLogger = consoleLogger('academy-worker'),
+): JobHandler {
+  return (job) => {
+    const data = job.data as QuestionGenJob;
+    logger.info(
+      `question-gen: recording ${String(data.recordingId)} accepted and skipped ` +
+        '(no question generator yet; post-launch. Drafts would need manager approval)',
+    );
+    return Promise.resolve();
   };
 }

@@ -5,3 +5,4 @@ export * from './contracts/training.js';
 export * from './contracts/media.js';
 export * from './contracts/manager.js';
 export * from './contracts/statusGuide.js';
+export * from './contracts/certs.js';

@@ -1,6 +1,8 @@
 import { useTrack } from '../../api/training.js';
+import { useMyCertificates } from '../../api/certs.js';
 import { useAuth } from '../../auth/AuthProvider.jsx';
 import WaitingForTrack from '../WaitingForTrack.jsx';
+import AccomplishmentBanner from '../../components/training/AccomplishmentBanner.jsx';
 import DeptSection from '../../components/training/DeptSection.jsx';
 import LevelSection from '../../components/training/LevelSection.jsx';
 import NextUpCta from '../../components/training/NextUpCta.jsx';
@@ -45,6 +47,9 @@ function Panel({ title, children }) {
 export default function Dashboard() {
   const { me } = useAuth();
   const track = useTrack();
+  // S09: the accomplishment banner. A separate query, so a slow or failing
+  // certificate call can never keep the training itself off the screen.
+  const certificates = useMyCertificates();
 
   if (track.isPending) {
     return (
@@ -92,6 +97,7 @@ export default function Dashboard() {
 
   return (
     <TrainingLayout>
+      <AccomplishmentBanner certificates={certificates.data?.certificates ?? []} />
       <section
         style={heroGradient}
         className="relative mb-6 flex flex-col gap-7 overflow-hidden rounded-card px-6 py-8 text-white md:flex-row md:items-center md:justify-between lg:px-[38px] lg:py-[34px]"

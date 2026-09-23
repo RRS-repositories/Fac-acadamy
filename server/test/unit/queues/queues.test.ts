@@ -4,11 +4,14 @@ import {
   QUEUE_NAMES,
   QUEUE_PREFIX,
   assertQueueName,
-  createBullQueue,
   createInMemoryQueue,
   createJobQueue,
   createProducers,
+  requireBullQueue,
+  assertRedisUrl,
+  verifyJobQueue,
 } from '../../../src/queues/index.js';
+import type { BullJobQueue } from '../../../src/queues/index.js';
 import type { LevelCompleteJob } from '../../../src/jobs/managerNotify.js';
 
 describe('queue names', () => {
@@ -93,21 +96,72 @@ describe('choosing an implementation', () => {
     }
   });
 
-  it('says plainly that the Redis queue is not built yet', () => {
-    expect(() => createBullQueue({ redisUrl: 'redis://localhost:6379' })).toThrow(/S08/);
+  it('uses the Redis-backed queue when REDIS_URL is set', async () => {
+    // Nothing connects here: ioredis is lazy and BullMQ creates its queues on
+    // first use, so this only proves which implementation was chosen.
+    const queue = createJobQueue({ redisUrl: 'redis://127.0.0.1:6379' }) as BullJobQueue;
+    expect(queue.prefix).toBe(QUEUE_PREFIX);
+    expect(typeof queue.queueFor).toBe('function');
+    await queue.close();
   });
 
-  it('falls back to the in-memory queue, loudly, until the Redis one exists', () => {
+  it('catches a REDIS_URL with the wrong scheme, without printing it', () => {
+    // ioredis takes anything it cannot parse as a socket path, so a typo would
+    // otherwise show up only as a connection that never comes up.
+    expect(() => assertRedisUrl('http://localhost:6379')).toThrow(/scheme/);
+    expect(() => assertRedisUrl('localhost:6379')).toThrow(/scheme/);
+    // The message says how long it was, never what it said: it can carry a password.
+    expect(() => assertRedisUrl('sekrit')).toThrow(/not a URL/);
+    expect(() => assertRedisUrl('sekrit')).toThrow(/6 characters/);
+    expect(assertRedisUrl('redis://127.0.0.1:6379')).toBeUndefined();
+    expect(assertRedisUrl('rediss://cache.example:6380')).toBeUndefined();
+  });
+
+  it('refuses to fall back to the in-memory queue in production', () => {
+    // A production API that enqueued into a process-local array would look
+    // healthy and deliver nothing, so an unusable REDIS_URL is fatal there.
+    expect(() =>
+      createJobQueue({ redisUrl: 'http://localhost:6379', nodeEnv: 'production' }),
+    ).toThrow(/Refusing to fall back/);
+  });
+
+  it('falls back to the in-memory queue, loudly, outside production', () => {
     const warnings: string[] = [];
     const warn = console.warn;
     console.warn = (...args: unknown[]) => void warnings.push(args.join(' '));
     try {
-      const queue = createJobQueue({ redisUrl: 'redis://localhost:6379' });
+      const queue = createJobQueue({ redisUrl: 'http://localhost:6379', nodeEnv: 'development' });
       expect(queue).toBeDefined();
       expect(warnings.join(' ')).toMatch(/in-memory queue/i);
       expect(warnings.join(' ')).toMatch(/lost/i);
     } finally {
       console.warn = warn;
     }
+  });
+
+  it('an unreachable Redis is fatal in production and a warning elsewhere', async () => {
+    // Port 1 answers nothing. The queue object is built either way; the check
+    // is the PING.
+    const queue = createJobQueue({ redisUrl: 'redis://127.0.0.1:1' });
+    const warnings: string[] = [];
+    await expect(verifyJobQueue(queue, { nodeEnv: 'production' })).rejects.toThrow(/PING/);
+    await expect(
+      verifyJobQueue(queue, {
+        nodeEnv: 'development',
+        logger: (m) => void warnings.push(m),
+      }),
+    ).resolves.toBe(false);
+    expect(warnings.join(' ')).toMatch(/PING/);
+    await queue.close();
+
+    // The in-memory queue has nothing to verify and never blocks a start-up.
+    await expect(verifyJobQueue(createInMemoryQueue(), { nodeEnv: 'production' })).resolves.toBe(
+      false,
+    );
+  }, 30_000);
+
+  it('gives the worker a real queue or nothing at all', () => {
+    expect(() => requireBullQueue(undefined)).toThrow(/REDIS_URL/);
+    expect(() => requireBullQueue('  ')).toThrow(/REDIS_URL/);
   });
 });

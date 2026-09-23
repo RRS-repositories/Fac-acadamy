@@ -1,6 +1,11 @@
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import type { ErrorRequestHandler, Express } from 'express';
+import type { Redis } from 'ioredis';
+import type { Pool } from 'pg';
+import type { CertificateIssuer } from './certs/issue.js';
+import { certsRouter } from './certs/routes.js';
+import { certVerifyRouter } from './certs/verify.routes.js';
 import { mediaProgressRouter } from './media/progress.js';
 import { mediaStreamRouter } from './media/routes.js';
 import type { MediaStore } from './media/store.js';
@@ -52,6 +57,19 @@ export interface AppDeps {
    * draft-question jobs go on, and MEDIA_MAX_UPLOAD_MB already in bytes.
    */
   mediaUpload?: { queue: JobQueue; maxUploadBytes: number };
+  /**
+   * S09 certificates. Given together with `auth` and `mediaStore`, it mounts
+   * GET /api/certs and GET /api/certs/:publicId/download (signed in), and the
+   * PUBLIC GET /api/cert/:publicId/verify. Left out, there are no certificate
+   * routes at all — which is what the tests that only exercise health and the
+   * flag do.
+   */
+  certificates?: {
+    db: Pool;
+    issuer: CertificateIssuer;
+    /** Shared with the sign-in limiters; null uses an in-memory limiter. */
+    redis?: Redis | null;
+  };
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -68,6 +86,20 @@ export function createApp(deps: AppDeps): Express {
 
   // Flag gate: after health, before every other API route and the JSON 404.
   app.use('/api', requireAcademyFlag(deps.flagEnabled));
+
+  // S09: the PUBLIC certificate check. Mounted here, BEFORE anything that
+  // requires a session, because anyone holding a certificate may verify it —
+  // but still after the flag gate, so a switched-off academy answers 503 the
+  // way every other route does. It has its own 30-a-minute per-IP limit.
+  if (deps.certificates !== undefined) {
+    app.use(
+      '/api',
+      certVerifyRouter({
+        db: deps.certificates.db,
+        redis: deps.certificates.redis ?? null,
+      }),
+    );
+  }
 
   if (deps.auth !== undefined) {
     app.use('/api', authRouter(deps.auth));
@@ -103,6 +135,22 @@ export function createApp(deps: AppDeps): Express {
     if (deps.mediaStore !== undefined) {
       app.use('/api/media', mediaStreamRouter({ ...deps.training, store: deps.mediaStore }));
     }
+  }
+
+  // S09: the signed-in half — the trainee's own certificates and the PDF
+  // download. It needs a session (requireAuth, inside the router) and the
+  // store the PDFs live in, so it only exists when both are wired.
+  if (deps.certificates !== undefined && deps.auth !== undefined && deps.mediaStore !== undefined) {
+    app.use(
+      '/api',
+      certsRouter({
+        db: deps.certificates.db,
+        sessions: deps.auth.sessions,
+        cookieSecure: deps.auth.cookieSecure,
+        store: deps.mediaStore,
+        issuer: deps.certificates.issuer,
+      }),
+    );
   }
 
   // Further feature routers are mounted here in later sections.

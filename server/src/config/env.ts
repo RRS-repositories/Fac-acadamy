@@ -60,6 +60,16 @@ const ConfigSchema = DbSettingsSchema.extend({
   SES_SENDER: z.string().email(),
   SMTP_URL: z.string().url().optional(),
 
+  // Notifications (S08). No email provider has been chosen yet — Mattermost
+  // was dropped on 23 Sep 2026, there is no AWS, and the CRM sends through
+  // Microsoft 365/Graph and SMTP — so the default is SHADOW: the message is
+  // composed, recorded in audit_events and logged, and nothing is sent.
+  //   shadow  compose + audit row + one log line. Nothing leaves the building.
+  //   log     one log line only, no audit row.
+  //   off     nothing at all.
+  // There is deliberately no 'send' value until a provider exists.
+  ACADEMY_NOTIFY_MODE: z.enum(['shadow', 'log', 'off']).default('shadow'),
+
   // Media (D15: no S3 — files live on the server's own disk). MEDIA_ROOT is
   // the folder the API streams from. It must be an absolute path: a relative
   // one would depend on the working directory pm2 happened to start in. The
@@ -114,6 +124,7 @@ const HINTS: Record<string, string> = {
   MEDIA_ROOT:
     'an absolute path to the media folder, outside the repo and outside the website folder',
   MEDIA_MAX_UPLOAD_MB: 'a whole number of megabytes',
+  ACADEMY_NOTIFY_MODE: "'shadow', 'log' or 'off' (no provider chosen yet, so no 'send')",
   NODE_ENV: 'development, test or production',
 };
 

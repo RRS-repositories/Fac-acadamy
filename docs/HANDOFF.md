@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **S08 (Provisioning & comms)** — Mattermost approval flow in shadow mode first, SES emails, manager DMs, BullMQ behind the existing queue seam. Needs from Brad: the email sender, the Mattermost bot + approver list, and the CRM role for a new trainee. S06 + S07 verified locally 23 Sep: 502 tests; the 6 calls stream from disk with range support; a sped-up or one-shot 'listen' is refused; manager roster, stuck list, CSV and preview-as-track all work |
+| Next step | **S10 (E2E suite + go-live prep)** — the Playwright journey tests, the backup and restore drill (must include MEDIA_ROOT), a load check, nginx + pm2 + deploy script, DNS/TLS. Still parked: the email provider (everything is composed and recorded, nothing sent), track-from-CRM-role, and who receives manager alerts (default: all managers). S08's queue half and S09 verified locally 23 Sep: 545 tests; BullMQ on Redis with retries, a dead-letter bay and exactly-once after a kill; certificates issue, download and verify publicly |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
