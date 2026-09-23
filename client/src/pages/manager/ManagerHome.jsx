@@ -1,6 +1,7 @@
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { TRACKS } from '@fac-academy/shared';
+import { useAuth } from '../../auth/AuthProvider.jsx';
 import ManagerLayout from '../../components/manager/ManagerLayout.jsx';
 import CountsRow from '../../components/manager/CountsRow.jsx';
 import ConfigStrip from '../../components/manager/ConfigStrip.jsx';
@@ -33,6 +34,7 @@ function matches(trainee, needle) {
 }
 
 export default function ManagerHome() {
+  const { me } = useAuth();
   const roster = useRoster();
   const stuck = useStuck();
   const config = useManagerConfig();
@@ -169,7 +171,13 @@ export default function ManagerHome() {
             )}
           </div>
         ) : (
-          <RosterTable trainees={rows} />
+          <RosterTable
+            trainees={rows}
+            selfId={me?.id ?? null}
+            // Our gate is off, so the column would be a pill that means
+            // nothing. It appears the day STAGE1_AUTH_REQUIRED does.
+            showStage1Auth={config.data?.stage1AuthRequired === true}
+          />
         )}
       </section>
 

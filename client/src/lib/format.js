@@ -45,6 +45,22 @@ export function percent(value) {
   return `${Math.round(Number(value))}%`;
 }
 
+/**
+ * "Mon 14:32" — the day and time someone was last seen, as the roster's Status
+ * column reads it. Coarser than a date and finer than "3 days ago", which is
+ * what a manager wants when they are deciding whether to ring somebody.
+ */
+export function dayTime(iso) {
+  if (!iso) return 'Never signed in';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Never signed in';
+  return date.toLocaleString('en-GB', {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 /** A day + month + year a manager can read: "23 Sep 2026". */
 export function shortDate(iso) {
   if (!iso) return '—';

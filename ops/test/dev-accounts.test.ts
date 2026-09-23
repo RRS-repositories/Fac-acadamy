@@ -373,10 +373,15 @@ describe.skipIf(!TEST_DB)('seed-test-accounts against the test database', () => 
     expect(cleared.stage_completions).toBe(1);
     expect(Object.keys(cleared).sort()).toEqual([...PROGRESS_TABLES].sort());
 
+    // Only the two trainees this test made: academy_test is shared, so another
+    // suite's leftovers must not decide whether this one passes.
     const left = await client.query<{ trainee_id: string }>(
       `SELECT trainee_id::text AS trainee_id FROM academy.lesson_progress
+        WHERE trainee_id = ANY($1::bigint[])
         UNION ALL
-       SELECT trainee_id::text FROM academy.stage_completions`,
+       SELECT trainee_id::text FROM academy.stage_completions
+        WHERE trainee_id = ANY($1::bigint[])`,
+      [[devId, otherId]],
     );
     expect(left.rows.map((r) => r.trainee_id)).toEqual([otherId, otherId]);
   });

@@ -4,7 +4,17 @@ import { useQuiz, useStage, useSubmitQuiz, useTrack } from '../../api/training.j
 import LockedCard from '../../components/training/LockedCard.jsx';
 import QuizResult from '../../components/training/QuizResult.jsx';
 import TrainingLayout from '../../components/training/TrainingLayout.jsx';
-import { btnPrimary, cardClass } from '../../components/training/styles.js';
+import {
+  btnPrimary,
+  cardClass,
+  optionFocusRing,
+  optionRow,
+  optionTextClass,
+  optionTone,
+  questionCardClass,
+  questionHeadClass,
+  questionNumClass,
+} from '../../components/training/styles.js';
 import { useScrollToTopOnChange } from '../../lib/scroll.js';
 
 /*
@@ -20,6 +30,13 @@ import { useScrollToTopOnChange } from '../../lib/scroll.js';
  * resizes anything — a selected option only changes colour, and its border is
  * the same width in both states. Starting a new attempt IS navigation, so it
  * scrolls back to the first question.
+ *
+ * Layout rule: the question line lives INSIDE the question card, as its first
+ * child. It used to be a <legend> in a <fieldset>, which the browser paints on
+ * the fieldset's border box — the heading rode up over the card's top edge and
+ * the card's 28px top padding was left below it as dead space. The group is
+ * now a plain div with role="group" + aria-labelledby, which keeps the same
+ * announcement without the legend's special box.
  */
 
 function Panel({ title, children }) {
@@ -192,20 +209,24 @@ function Attempt({
 
       <form onSubmit={handleSubmit}>
         {questions.map((question, qIndex) => (
-          <fieldset key={question.id} className={`${cardClass} mb-4 px-8 py-7`}>
-            <legend className="mb-3.5 flex gap-2.5 text-[15px] font-bold text-navy">
-              <span className="font-display font-extrabold text-orange">Q{qIndex + 1}</span>
-              <span>{question.prompt}</span>
-            </legend>
+          <div
+            key={question.id}
+            data-testid="question-card"
+            role="group"
+            aria-labelledby={`question-${question.id}-prompt`}
+            className={questionCardClass}
+          >
+            <h2 id={`question-${question.id}-prompt`} className={questionHeadClass}>
+              <span className={questionNumClass}>Q{qIndex + 1}</span>
+              <span className="min-w-0 flex-1">{question.prompt}</span>
+            </h2>
             {question.options.map((option) => {
               const selected = answers[question.id] === option.id;
               return (
                 <label
                   key={option.id}
-                  className={`mb-2.5 flex cursor-pointer items-start gap-3 rounded-[10px] border-[1.5px] px-[15px] py-3 text-sm ${
-                    selected
-                      ? 'border-orange bg-orange-soft'
-                      : 'border-line bg-card hover:border-navy-mid'
+                  className={`${optionRow} ${optionFocusRing} cursor-pointer ${
+                    selected ? optionTone.sel : optionTone.idle
                   }`}
                 >
                   <input
@@ -214,13 +235,13 @@ function Attempt({
                     value={option.id}
                     checked={selected}
                     onChange={() => onChoose(question.id, option.id)}
-                    className="mt-[3px] accent-orange"
+                    className="mt-[3px] shrink-0 accent-orange"
                   />
-                  <span>{option.text}</span>
+                  <span className={optionTextClass}>{option.text}</span>
                 </label>
               );
             })}
-          </fieldset>
+          </div>
         ))}
 
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-3">

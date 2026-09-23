@@ -204,12 +204,16 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
         stagesTotal: 0,
         stagesDone: 0,
         currentStageCode: null,
+        currentStageDisplayNum: null,
         attempts: 0,
         fails: 0,
         bestAverage: null,
         isDisabled: false,
         status: 'ACTIVE',
+        stage1Authorised: false,
       });
+      // No track, so no chips: the roster shows a record, not a syllabus.
+      expect(row.stages).toEqual([]);
       expect((await roster(h, mgr)).counts.waitingForTrack).toBeGreaterThanOrEqual(1);
     });
 
@@ -225,6 +229,10 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
       expect(before.stagesDone).toBe(0);
       expect(before.currentStageCode).toBe(expected[0]);
       expect(before.attempts).toBe(0);
+      // Nothing attempted yet, so the chip column is empty rather than a row
+      // of untouched stages.
+      expect(before.stages).toEqual([]);
+      expect(before.currentStageDisplayNum).not.toBeNull();
 
       await passStage(h, who, expected[0]!);
 
@@ -237,6 +245,18 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
       expect(after.currentStageCode).toBe(expected[1]);
       expect(after.lastActivityAt).not.toBeNull();
 
+      // One chip, for the stage they actually sat, capped by the track length.
+      expect(after.stages).toHaveLength(1);
+      expect(after.stages[0]).toMatchObject({
+        code: expected[0],
+        attempts: 1,
+        fails: 0,
+        best: 100,
+        passed: true,
+      });
+      expect(after.stages[0]?.displayNum).not.toBe('');
+      expect(after.stages.length).toBeLessThanOrEqual(after.stagesTotal);
+
       // The detail view agrees, and uses the trainee's own unlock rule.
       const detail = (await get(h, `/api/manager/trainee/${who.me.id}`, mgr.cookie))
         .body as TraineeDetail;
@@ -245,6 +265,43 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
       expect(detail.stages[1]?.state).toBe('available');
       expect(detail.stages[2]?.state).toBe('locked');
       expect(detail.stages[0]?.lastAttemptAt).not.toBeNull();
+    });
+
+    it.skipIf(!seeded)('carries the per-stage chips for everyone on the page', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const failing = await staff(h);
+      const passing = await staff(h);
+      await assignTrack(h, mgr, failing.me.id, 'CS');
+      await assignTrack(h, mgr, passing.me.id, 'CS');
+
+      const first = expectedFor('CS')[0]!;
+      // Two failed attempts on a stage that stays unpassed. Written with SQL:
+      // what is under test is the roster's chip query, not the grader.
+      await db.pool.query(
+        `INSERT INTO academy.quiz_attempts
+            (trainee_id, quiz_id, attempt_number, score_pct, passed, started_at, submitted_at)
+       SELECT $1, z.id, g.n, 40, FALSE, now(), now()
+         FROM academy.quizzes z
+         JOIN academy.stages s ON s.id = z.stage_id
+         CROSS JOIN generate_series(1, 2) AS g(n)
+        WHERE s.code = $2`,
+        [failing.me.id, first],
+      );
+      await passStage(h, passing, first);
+
+      // ONE roster read fills in both people's chips.
+      const list = await roster(h, mgr);
+      expect(rowFor(list, failing.me.id).stages).toEqual([
+        expect.objectContaining({ code: first, attempts: 2, fails: 2, best: 40, passed: false }),
+      ]);
+      expect(rowFor(list, passing.me.id).stages).toEqual([
+        expect.objectContaining({ code: first, attempts: 1, fails: 0, best: 100, passed: true }),
+      ]);
+      // Nobody's chip list can be longer than their own track.
+      for (const t of list.trainees) {
+        expect(t.stages.length).toBeLessThanOrEqual(t.stagesTotal);
+      }
     });
 
     it('filters by track, by search text and by disabled', async () => {

@@ -22,6 +22,25 @@ export type TraineeStatus = z.infer<typeof TraineeStatusSchema>;
 /** A trainee is "online now" when a live session was seen this recently. */
 export const ONLINE_WINDOW_MINUTES = 3;
 
+/**
+ * One stage chip on a roster row: how many goes it took, the best mark and how
+ * many of those goes failed. Only stages the trainee has actually attempted are
+ * sent, in their own track's order — the roster shows a record, not a syllabus.
+ *
+ * No title, no lesson, no question: the roster names the stage by its badge
+ * number only ("S3"), so nothing content-shaped travels with the list.
+ */
+export const RosterStageSchema = z.object({
+  code: z.string(),
+  /** The badge text: '3', 'A1', 'IT2'. */
+  displayNum: z.string(),
+  attempts: z.number().int(),
+  best: z.number().nullable(),
+  fails: z.number().int(),
+  passed: z.boolean(),
+});
+export type RosterStage = z.infer<typeof RosterStageSchema>;
+
 /** One row of the manager roster. Timestamps are ISO 8601 strings. */
 export const RosterTraineeSchema = z.object({
   id: z.number().int(),
@@ -43,12 +62,21 @@ export const RosterTraineeSchema = z.object({
   /** The first visible stage they have not passed: where they are now. */
   currentStageCode: z.string().nullable(),
   currentStageTitle: z.string().nullable(),
+  /** That stage's badge text, so the roster can read "Stage 6 · …". */
+  currentStageDisplayNum: z.string().nullable(),
   /** Quiz attempts across every stage. */
   attempts: z.number().int(),
   /** Attempts that did not pass. */
   fails: z.number().int(),
   /** Mean of their best score per attempted stage, null with no attempts. */
   bestAverage: z.number().nullable(),
+  /**
+   * academy.progression_authorisations. Only meaningful while
+   * STAGE1_AUTH_REQUIRED is on; the roster hides the column when it is off.
+   */
+  stage1Authorised: z.boolean(),
+  /** Attempted stages only, in track order, never longer than the track. */
+  stages: z.array(RosterStageSchema),
   startedAt: z.string(),
 });
 export type RosterTrainee = z.infer<typeof RosterTraineeSchema>;

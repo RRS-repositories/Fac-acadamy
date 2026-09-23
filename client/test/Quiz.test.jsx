@@ -127,6 +127,32 @@ describe('Quiz attempt', () => {
     expect(screen.getByText('5/5 answered')).toBeInTheDocument();
   });
 
+  it('keeps the question heading inside its card, as the first thing in it', async () => {
+    mockFetch(routes());
+    renderApp('/stage/s1/quiz');
+    await screen.findByText('Invented question 1?');
+
+    const cards = screen.getAllByTestId('question-card');
+    expect(cards).toHaveLength(5);
+
+    cards.forEach((card, i) => {
+      // The heading is a real descendant of the card, not a sibling above it.
+      const heading = screen.getByText(`Invented question ${i + 1}?`).closest('h2');
+      expect(heading).not.toBeNull();
+      expect(card).toContainElement(heading);
+      // …and it is the card's first child, so nothing sits above the question.
+      expect(card.firstElementChild).toBe(heading);
+      // A <legend> is painted on the fieldset's border box: it escapes the
+      // card's padding and leaves that padding as a gap. Never again.
+      expect(card.tagName).not.toBe('FIELDSET');
+      expect(card.querySelector('legend')).toBeNull();
+      // The first option follows the heading directly — no spacer between.
+      expect(card.children[1]).toHaveTextContent(`Q${i + 1} option 1`);
+      // The group is still announced with the question as its name.
+      expect(card).toHaveAttribute('aria-labelledby', heading.id);
+    });
+  });
+
   it('keeps submit disabled until every question is answered', async () => {
     mockFetch(routes());
     renderApp('/stage/s1/quiz');
@@ -196,6 +222,19 @@ describe('Quiz result', () => {
     expect(screen.getByRole('link', { name: 'Next stage →' })).toHaveAttribute('href', '/stage/s2');
     expect(screen.getByRole('link', { name: 'Back to my training' })).toHaveAttribute('href', '/');
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+  });
+
+  it('reviews each question in the same card as the attempt screen', async () => {
+    await submitAndSee(result({ passed: false, reveal: false }));
+
+    const cards = screen.getAllByTestId('question-card');
+    expect(cards).toHaveLength(5);
+    cards.forEach((card, i) => {
+      const heading = screen.getByRole('heading', { name: `Invented question ${i + 1}?` });
+      expect(card).toContainElement(heading);
+      expect(card.querySelector('legend')).toBeNull();
+      expect(card.firstElementChild).toContainElement(heading);
+    });
   });
 
   it('Try again starts a fresh attempt with nothing selected', async () => {

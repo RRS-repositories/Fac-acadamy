@@ -105,7 +105,13 @@ export default function ManagerLayout({ title, children }) {
         </div>
       </aside>
 
-      <main className="w-full max-w-[1320px] px-5 py-6 lg:px-11 lg:pt-[34px] lg:pb-[70px]">
+      {/*
+        min-w-0: a grid track is min-content-sized by default, so a wide table
+        inside it would push the whole document sideways. The roster's own
+        scroll box handles the width instead, and the page never scrolls
+        horizontally at any viewport size.
+      */}
+      <main className="w-full min-w-0 max-w-[1320px] px-5 py-6 lg:px-11 lg:pt-[34px] lg:pb-[70px]">
         {title ? <h1 className="mb-5 font-display text-[26px] font-bold">{title}</h1> : null}
         {children}
       </main>

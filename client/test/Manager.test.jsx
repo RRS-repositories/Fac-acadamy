@@ -33,9 +33,12 @@ function trainee(overrides) {
     stagesDone: 2,
     currentStageCode: 'l1-3',
     currentStageTitle: 'Third stage',
+    currentStageDisplayNum: '3',
     attempts: 3,
     fails: 0,
     bestAverage: 84,
+    stage1Authorised: true,
+    stages: [],
     startedAt: ago(20 * DAY),
     ...overrides,
   };
@@ -53,6 +56,10 @@ const AVERY = trainee({
   attempts: 5,
   fails: 1,
   bestAverage: 88,
+  stages: [
+    { code: 'l1-1', displayNum: '1', attempts: 1, best: 92, fails: 0, passed: true },
+    { code: 'l1-2', displayNum: '2', attempts: 2, best: 80, fails: 1, passed: true },
+  ],
 });
 
 const CASEY = trainee({
@@ -65,9 +72,11 @@ const CASEY = trainee({
   stagesDone: 0,
   currentStageCode: null,
   currentStageTitle: null,
+  currentStageDisplayNum: null,
   attempts: 0,
   fails: 0,
   bestAverage: null,
+  stage1Authorised: false,
   startedAt: ago(2 * DAY),
 });
 
@@ -79,6 +88,23 @@ const DANA = trainee({
   isDisabled: true,
   lastActivityAt: ago(9 * DAY),
   fails: 3,
+});
+
+/** The signed-in manager's own row: same id as the MANAGER fixture. */
+const SELF = trainee({
+  id: MANAGER.id,
+  fullName: MANAGER.fullName,
+  email: MANAGER.email,
+  track: null,
+  stagesTotal: 0,
+  stagesDone: 0,
+  currentStageCode: null,
+  currentStageTitle: null,
+  currentStageDisplayNum: null,
+  attempts: 0,
+  fails: 0,
+  bestAverage: null,
+  stage1Authorised: false,
 });
 
 const COUNTS = { total: 3, active: 2, disabled: 1, onlineNow: 1, waitingForTrack: 1 };
@@ -206,11 +232,11 @@ const DETAIL = {
 };
 
 /** The manager endpoints a roster screen needs, with a mutable roster. */
-function managerRoutes(overrides = {}) {
+function managerRoutes(overrides = {}, { people = [AVERY, CASEY, DANA] } = {}) {
   const disabled = new Set([13]);
   const tracks = new Map();
   const roster = () => ({
-    trainees: [AVERY, CASEY, DANA].map((t) => ({
+    trainees: people.map((t) => ({
       ...t,
       isDisabled: disabled.has(t.id),
       // A disabled account is signed out, so the server stops calling it online.
@@ -309,9 +335,15 @@ describe('Manager roster', () => {
     // getByRole('cell') and not getByText: every row carries a track <select>
     // whose options name all nine tracks.
     expect(avery.getByRole('cell', { name: 'Customer Service' })).toBeInTheDocument();
-    expect(avery.getByText('Third stage')).toBeInTheDocument();
-    expect(avery.getByText('3/8')).toBeInTheDocument();
-    expect(avery.getByText('88%')).toBeInTheDocument();
+    expect(avery.getByText(/Stage 3 · Third stage/)).toBeInTheDocument();
+    expect(avery.getByText('3 of 8 stages passed')).toBeInTheDocument();
+
+    // One chip per attempted stage: green clean, red the moment there is a fail.
+    expect(avery.getByText('S1: 1× · best 92%')).toBeInTheDocument();
+    expect(avery.getByText('S2: 2× · best 80% · 1 fail')).toBeInTheDocument();
+    expect(avery.getByText('S1: 1× · best 92%')).toHaveAttribute('data-tone', 'pass');
+    expect(avery.getByText('S2: 2× · best 80% · 1 fail')).toHaveAttribute('data-tone', 'fail');
+    expect(within(row(12)).getByText('No attempts yet')).toBeInTheDocument();
 
     // The dot follows onlineNow, and says so in words as well as colour.
     expect(avery.getByTestId('online-dot')).toHaveAttribute('data-online', 'true');
@@ -320,7 +352,7 @@ describe('Manager roster', () => {
 
     // D13: no track yet is a state of its own, not an empty cell.
     expect(within(row(12)).getByRole('cell', { name: 'No track yet' })).toBeInTheDocument();
-    expect(within(row(12)).getByText('Waiting for track')).toBeInTheDocument();
+    expect(within(row(12)).getByText('Waiting for a track')).toBeInTheDocument();
 
     const counts = within(screen.getByTestId('counts'));
     expect(counts.getByText('Trainees').nextSibling).toHaveTextContent('3');
@@ -396,6 +428,96 @@ describe('Manager roster', () => {
     expect(await within(row(13)).findByRole('button', { name: 'Disable' })).toBeInTheDocument();
   });
 
+  it('offers no Disable on the signed-in manager’s own row, only a "You" marker', async () => {
+    const fetchMock = mockFetch(managerRoutes({}, { people: [SELF, AVERY] }));
+    renderApp('/manager');
+    await rosterLoaded();
+
+    const self = within(row(MANAGER.id));
+    expect(self.queryByRole('button', { name: 'Disable' })).toBeNull();
+    expect(self.getByTestId('own-row-marker')).toHaveTextContent('Your account');
+    expect(self.getByText('You')).toBeInTheDocument();
+
+    // A manager takes the training too, so the track control stays.
+    expect(
+      self.getByRole('combobox', { name: `Track for ${MANAGER.fullName}` }),
+    ).toBeInTheDocument();
+
+    // Everybody else still has one.
+    expect(within(row(11)).getByRole('button', { name: 'Disable' })).toBeInTheDocument();
+    expect(callsTo(fetchMock, 'POST', `/api/manager/trainees/${MANAGER.id}/disable`)).toHaveLength(
+      0,
+    );
+  });
+
+  it('names the reason a change was refused instead of "that didn’t save"', async () => {
+    mockFetch(
+      managerRoutes({
+        'POST /api/manager/trainees/11/disable': () => [400, { error: 'invalid_request' }],
+      }),
+    );
+    renderApp('/manager');
+    await rosterLoaded();
+
+    fireEvent.click(within(row(11)).getByRole('button', { name: 'Disable' }));
+    fireEvent.click(within(row(11)).getByRole('button', { name: 'Yes, disable' }));
+
+    expect(
+      await within(row(11)).findByText("You can't disable your own account."),
+    ).toBeInTheDocument();
+    expect(within(row(11)).queryByText(/didn't save/i)).toBeNull();
+  });
+
+  it('says the row has gone when the server answers not_found', async () => {
+    mockFetch(
+      managerRoutes({
+        'POST /api/manager/trainees/13/enable': () => [404, { error: 'not_found' }],
+      }),
+    );
+    renderApp('/manager');
+    await rosterLoaded();
+
+    fireEvent.click(within(row(13)).getByRole('button', { name: 'Re-enable' }));
+    expect(
+      await within(row(13)).findByText('That trainee no longer exists. Refresh the page.'),
+    ).toBeInTheDocument();
+  });
+
+  it('says so plainly when the request never reached the server', async () => {
+    mockFetch(managerRoutes());
+    const live = globalThis.fetch;
+    // Only the disable call fails at the transport layer; the roster still loads.
+    vi.stubGlobal('fetch', (path, init = {}) => {
+      if (String(path).endsWith('/disable')) return Promise.reject(new TypeError('offline'));
+      return live(path, init);
+    });
+    renderApp('/manager');
+    await rosterLoaded();
+
+    fireEvent.click(within(row(11)).getByRole('button', { name: 'Disable' }));
+    fireEvent.click(within(row(11)).getByRole('button', { name: 'Yes, disable' }));
+    expect(await within(row(11)).findByText("Couldn't reach the server.")).toBeInTheDocument();
+  });
+
+  it('keeps Assign switched off while the select still says "No track yet"', async () => {
+    const fetchMock = mockFetch(managerRoutes());
+    renderApp('/manager');
+    await rosterLoaded();
+
+    const casey = within(row(12));
+    const assign = casey.getByRole('button', { name: 'Assign' });
+    expect(casey.getByRole('combobox', { name: 'Track for Casey Nolan' })).toHaveValue('');
+    expect(assign).toBeDisabled();
+
+    fireEvent.click(assign);
+    expect(callsTo(fetchMock, 'PUT', '/api/manager/trainees/12/track')).toHaveLength(0);
+
+    fireEvent.change(casey.getByRole('combobox', { name: 'Track for Casey Nolan' }), {
+      target: { value: 'ADMIN' },
+    });
+    expect(casey.getByRole('button', { name: 'Assign' })).toBeEnabled();
+  });
+
   it('assigns a track with a PUT carrying the chosen code', async () => {
     const fetchMock = mockFetch(managerRoutes());
     renderApp('/manager');
@@ -459,6 +581,92 @@ describe('Manager roster', () => {
     renderApp('/manager');
     expect(await screen.findByText('No trainees yet.')).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();
+  });
+});
+
+describe('Roster layout', () => {
+  it('uses the approved column set with a navy header row', async () => {
+    mockFetch(managerRoutes());
+    renderApp('/manager');
+    await rosterLoaded();
+
+    // The last column to appear is the flag-dependent one; wait for it.
+    await screen.findByRole('columnheader', { name: 'Stage 1 auth' });
+    const headers = screen.getAllByRole('columnheader').map((el) => el.textContent);
+    expect(headers).toEqual([
+      'Trainee',
+      'Status',
+      'Track',
+      'Current position',
+      'Test stats (attempts · best %)',
+      'Stage 1 auth',
+      'Account',
+    ]);
+    // The prototype's navy header with white labels, ported to the tokens.
+    for (const cell of screen.getAllByRole('columnheader')) {
+      expect(cell.className).toContain('bg-navy');
+      expect(cell.className).toContain('text-white');
+      // Sticky, so the labels stay put while the rows scroll.
+      expect(cell.className).toContain('sticky');
+    }
+  });
+
+  it('leaves the Stage 1 auth column out while the gate is switched off', async () => {
+    mockFetch(
+      managerRoutes({
+        'GET /api/manager/config': [
+          200,
+          { stage1AuthRequired: false, academyV2: true, provisioning: false },
+        ],
+      }),
+    );
+    renderApp('/manager');
+    await rosterLoaded();
+    // Wait for the config answer itself, so this is not just "not loaded yet".
+    await waitFor(() =>
+      expect(document.querySelector('[data-config="stage1AuthRequired"]')).toHaveTextContent('Off'),
+    );
+
+    const headers = screen.getAllByRole('columnheader').map((el) => el.textContent);
+    expect(headers).not.toContain('Stage 1 auth');
+    expect(screen.queryByTestId('stage1-pill')).toBeNull();
+    expect(screen.queryByText('Authorised')).toBeNull();
+  });
+
+  it('shows the authorisation pill only when the gate is on', async () => {
+    mockFetch(managerRoutes());
+    renderApp('/manager');
+    await screen.findByRole('columnheader', { name: 'Stage 1 auth' });
+
+    expect(within(row(11)).getByTestId('stage1-pill')).toHaveAttribute('data-authorised', 'true');
+    expect(within(row(11)).getByText('Authorised')).toBeInTheDocument();
+    expect(within(row(12)).getByTestId('stage1-pill')).toHaveAttribute('data-authorised', 'false');
+  });
+
+  it('scrolls the table inside its own container, never the page', async () => {
+    mockFetch(managerRoutes());
+    renderApp('/manager');
+    const table = await screen.findByRole('table');
+
+    // The scrolling element is the box around the table, so a wide roster
+    // cannot push the document sideways.
+    const box = screen.getByTestId('roster-scroll');
+    expect(table.closest('[data-scroll="roster"]')).toBe(box);
+    expect(box.className).toContain('overflow-auto');
+    expect(box.className).toContain('min-w-0');
+    expect(box.className).toMatch(/max-h-/);
+    // The box must be a containing block, or the sr-only labels in the
+    // right-hand cells fall outside every clip and the PAGE scrolls sideways.
+    expect(box.className).toContain('relative');
+
+    // Nothing between the table and the page may stretch to the table's width.
+    const main = table.closest('main');
+    expect(main.className).toContain('min-w-0');
+
+    // Long values truncate with the full text kept in a title attribute.
+    const email = within(row(11)).getByText('avery.stone@example.com');
+    expect(email.className).toContain('truncate');
+    expect(email).toHaveAttribute('title', 'avery.stone@example.com');
   });
 });
 

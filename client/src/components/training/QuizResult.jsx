@@ -1,6 +1,18 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { btnGhost, btnPrimary, cardClass, pulseClass } from './styles.js';
+import {
+  badgeBase,
+  btnGhost,
+  btnPrimary,
+  cardClass,
+  optionRow,
+  optionTextClass,
+  optionTone,
+  pulseClass,
+  questionCardClass,
+  questionHeadClass,
+  questionNumClass,
+} from './styles.js';
 import { focusWithoutScrolling } from '../../lib/scroll.js';
 
 /*
@@ -15,12 +27,6 @@ import { focusWithoutScrolling } from '../../lib/scroll.js';
  * Rendering the result is an in-place update, so it must not move the page:
  * focus moves to the score for screen readers, with preventScroll.
  */
-
-const TONE = {
-  correct: 'border-green bg-green-soft',
-  wrong: 'border-red bg-red-soft',
-  plain: 'border-line bg-card',
-};
 
 /**
  * How one option reads in the review.
@@ -124,14 +130,14 @@ export default function QuizResult({
         // Never infer the answer: only what the server chose to send.
         const reveal = passed && verdict.correctOptionId !== null;
         return (
-          <section key={question.id} className={`${cardClass} mb-4 px-8 py-7`}>
-            <div className="mb-3.5 flex gap-2.5 text-[15px] font-bold text-navy">
-              <span className="shrink-0 font-display font-extrabold text-orange">
-                Q{qIndex + 1}
-              </span>
-              <span className="flex-1">{question.prompt}</span>
+          <section key={question.id} data-testid="question-card" className={questionCardClass}>
+            <div className={`${questionHeadClass} flex-wrap`}>
+              <span className={questionNumClass}>Q{qIndex + 1}</span>
+              <h3 className="min-w-0 flex-1 font-sans text-[15px] leading-[1.45] font-bold text-navy">
+                {question.prompt}
+              </h3>
               <span
-                className={`shrink-0 rounded-full px-[11px] py-[5px] text-[11px] font-bold tracking-[0.05em] uppercase ${
+                className={`${badgeBase} ${
                   verdict.correct ? 'bg-green-soft text-green' : 'bg-red-soft text-red'
                 }`}
               >
@@ -150,10 +156,12 @@ export default function QuizResult({
                 <div
                   key={option.id}
                   data-testid={state.isCorrectAnswer ? 'correct-answer' : 'option'}
-                  className={`mb-2.5 flex items-start gap-3 rounded-[10px] border-[1.5px] px-[15px] py-3 text-sm ${TONE[state.tone]}`}
+                  className={`${optionRow} ${optionTone[state.tone]}`}
                 >
-                  <span aria-hidden="true">{state.mark}</span>
-                  <span>{option.text}</span>
+                  <span aria-hidden="true" className="shrink-0">
+                    {state.mark}
+                  </span>
+                  <span className={optionTextClass}>{option.text}</span>
                   {state.label ? <span className="sr-only">{state.label}</span> : null}
                 </div>
               );

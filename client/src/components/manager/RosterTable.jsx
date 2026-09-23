@@ -1,138 +1,196 @@
 import { Link } from 'react-router-dom';
-import ProgressBar from '../training/ProgressBar.jsx';
-import { badgeBase, badgeTone } from '../training/styles.js';
-import { humanStatus, percent, relativeTime, trackLabel } from '../../lib/format.js';
+import { dayTime, trackLabel } from '../../lib/format.js';
 import OnlineDot from './OnlineDot.jsx';
+import StatChips from './StatChips.jsx';
 import TraineeActions from './TraineeActions.jsx';
 
 /*
- * The live roster. One row per trainee, every number straight off
- * /api/manager/roster — the browser sorts and filters, it never decides who is
- * where.
+ * The live roster, styled as the approved prototype's management table: a navy
+ * header row with white column labels, rows on white separated by a hairline,
+ * and the per-stage chips in the middle doing the work of a progress report.
+ *
+ * Layout and column headings come from the prototype; every value comes from
+ * /api/manager/roster. The browser sorts and filters, it never decides who is
+ * where, and no trainee row is ever hard-coded here.
  *
  * It is a real <table>: the columns are data, and a screen reader should be
- * able to say "Attempts, 4" without the manager counting cells.
+ * able to say "Test stats, S3: 1×, best 83%" without the manager counting
+ * cells.
+ *
+ * Scrolling (the sideways-scrolling-page bug): the SCROLL BOX is the div
+ * below, never the page. Two things keep it that way, and both are needed.
+ *
+ *  - min-w-0 on the layout's <main>: a grid track is min-content-sized by
+ *    default, so the 1fr column would otherwise grow to the table's natural
+ *    width and take the document with it.
+ *  - `relative` on the box itself. Every sr-only label is position:absolute,
+ *    and with no positioned ancestor its containing block was the page — so
+ *    the hidden <label>s in the far-right Account cells sat ~700px beyond the
+ *    viewport, unclipped by any overflow rule, and the page scrolled sideways
+ *    even at phone width. Making the box a containing block puts them back
+ *    inside it. (Measured: 848px of document scroll at 390px wide, 390 after.)
+ *
+ * The header row is sticky inside that box, so the column labels stay put
+ * while the rows move.
  */
 
-const th = 'px-3 py-2.5 text-left text-[11px] font-bold tracking-[0.07em] text-muted uppercase';
-const td = 'px-3 py-3 align-middle text-[13px]';
+const th =
+  'sticky top-0 z-10 bg-navy px-3.5 py-[11px] text-left font-display text-[12px] font-semibold ' +
+  'tracking-[0.04em] whitespace-nowrap text-white';
+const td = 'border-b border-line px-3.5 py-[11px] align-top text-[13.5px]';
+const pillBase =
+  'inline-block rounded-full px-[11px] py-[5px] text-[11px] font-bold tracking-[0.05em] uppercase';
+const nameBadge =
+  'ml-1.5 inline-block rounded-md px-2 py-[2px] align-middle text-[11px] font-semibold';
 
-function StatusBadge({ trainee }) {
-  if (trainee.isDisabled) {
-    return <span className={`${badgeBase} bg-red-soft text-red`}>Disabled</span>;
-  }
+/*
+ * The one small badge beside the name, as the prototype has it. "Disabled" is
+ * deliberately NOT here: the Status column already says it and the Account
+ * button already reads "Re-enable", so a third copy is noise.
+ */
+function NameBadge({ trainee, isSelf }) {
+  if (isSelf) return <span className={`${nameBadge} bg-[#EEF1F5] text-muted`}>You</span>;
   if (!trainee.track) {
-    return <span className={`${badgeBase} bg-amber-soft text-amber`}>Waiting for track</span>;
+    return <span className={`${nameBadge} bg-amber-soft text-amber`}>Waiting for a track</span>;
   }
-  const done = (trainee.stagesDone ?? 0) >= (trainee.stagesTotal ?? 0) && trainee.stagesTotal > 0;
+  return null;
+}
+
+/** A dot plus either "Online" or the day and time we last saw them. */
+function StatusCell({ trainee }) {
+  if (trainee.isDisabled) {
+    return <OnlineDot online={false} label="Disabled" showLabel />;
+  }
+  if (trainee.onlineNow) return <OnlineDot online />;
+  return <OnlineDot online={false} label={dayTime(trainee.lastSeenAt)} showLabel />;
+}
+
+/** "Stage 6 · Live Sales Calls", with how far through they are underneath. */
+function PositionCell({ trainee }) {
+  const total = trainee.stagesTotal ?? 0;
+  const done = trainee.stagesDone ?? 0;
+  const title = trainee.currentStageTitle;
+  const badge = trainee.currentStageDisplayNum;
+
+  if (!trainee.track) return <span className="text-muted">No stages yet</span>;
   return (
-    <span className={`${badgeBase} ${done ? badgeTone.done : badgeTone.active}`}>
-      {humanStatus(trainee.status ?? (done ? 'complete' : 'in progress'))}
-    </span>
+    <>
+      {title ? (
+        <span className="block font-semibold text-navy" title={title}>
+          {badge ? `Stage ${badge} · ` : ''}
+          {title}
+        </span>
+      ) : null}
+      <span className="mt-0.5 block text-[12px] text-muted tabular-nums">
+        {total > 0 ? `${done} of ${total} stages passed` : `${done} stages passed`}
+      </span>
+    </>
   );
 }
 
-function Row({ trainee }) {
-  const total = trainee.stagesTotal ?? 0;
-  const done = trainee.stagesDone ?? 0;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-
+function Row({ trainee, isSelf, showStage1 }) {
   return (
     <tr
       data-trainee={trainee.id}
       data-disabled={trainee.isDisabled ? 'true' : 'false'}
-      className={`border-t border-line ${trainee.isDisabled ? 'opacity-60' : ''}`}
+      className={`hover:bg-[#F8FAFC] ${trainee.isDisabled ? 'opacity-60' : ''}`}
     >
-      <th scope="row" className={`${td} font-semibold`}>
-        <Link to={`/manager/trainee/${trainee.id}`} className="text-navy underline">
+      <th scope="row" className={`${td} max-w-[230px] min-w-[170px] text-left font-normal`}>
+        <Link
+          to={`/manager/trainee/${trainee.id}`}
+          className="font-bold text-navy underline"
+          title={trainee.fullName}
+        >
           {trainee.fullName}
         </Link>
-        <span className="mt-0.5 block text-[11.5px] font-normal text-muted">{trainee.email}</span>
-      </th>
-      <td className={td}>{trackLabel(trainee.track)}</td>
-      <td className={td}>
-        <OnlineDot online={Boolean(trainee.onlineNow)} />
-      </td>
-      <td className={td}>
-        {trainee.currentStageTitle ? (
-          <span className="font-semibold text-navy">{trainee.currentStageTitle}</span>
-        ) : (
-          <span className="text-muted">Not started</span>
-        )}
-      </td>
-      <td className={`${td} w-[150px]`}>
-        <span className="mb-1.5 block text-[12.5px] font-semibold tabular-nums">
-          {done}/{total}
+        <NameBadge trainee={trainee} isSelf={isSelf} />
+        <span className="mt-0.5 block truncate text-[12px] text-muted" title={trainee.email}>
+          {trainee.email}
         </span>
-        <ProgressBar
-          value={pct}
-          tone={total > 0 && done === total ? 'green' : 'orange'}
-          label={`${trainee.fullName}: ${done} of ${total} stages passed`}
-        />
+      </th>
+
+      <td className={`${td} whitespace-nowrap`}>
+        <StatusCell trainee={trainee} />
       </td>
-      <td className={`${td} tabular-nums`}>{trainee.attempts ?? 0}</td>
-      <td className={`${td} tabular-nums ${(trainee.fails ?? 0) >= 3 ? 'font-bold text-red' : ''}`}>
-        {trainee.fails ?? 0}
+
+      <td className={`${td} whitespace-nowrap`}>{trackLabel(trainee.track)}</td>
+
+      {/* min-w so "Stage 1 · Welcome & Induction" reads on two lines, not five. */}
+      <td className={`${td} max-w-[260px] min-w-[176px]`}>
+        <PositionCell trainee={trainee} />
       </td>
-      <td className={`${td} tabular-nums`}>{percent(trainee.bestAverage)}</td>
-      <td className={`${td} text-muted`}>{relativeTime(trainee.lastActivityAt)}</td>
+
+      <td className={`${td} max-w-[300px] min-w-[190px]`}>
+        <StatChips stages={trainee.stages ?? []} />
+      </td>
+
+      {showStage1 ? (
+        <td className={`${td} whitespace-nowrap`}>
+          <span
+            data-testid="stage1-pill"
+            data-authorised={trainee.stage1Authorised ? 'true' : 'false'}
+            className={`${pillBase} ${
+              trainee.stage1Authorised ? 'bg-green-soft text-green' : 'bg-amber-soft text-amber'
+            }`}
+          >
+            {trainee.stage1Authorised ? 'Authorised' : 'Awaiting'}
+          </span>
+        </td>
+      ) : null}
+
       <td className={td}>
-        <StatusBadge trainee={trainee} />
-      </td>
-      <td className={td}>
-        <TraineeActions trainee={trainee} />
+        <TraineeActions trainee={trainee} isSelf={isSelf} />
       </td>
     </tr>
   );
 }
 
-export default function RosterTable({ trainees }) {
+export default function RosterTable({ trainees, selfId = null, showStage1Auth = false }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-left">
+    <div
+      data-testid="roster-scroll"
+      data-scroll="roster"
+      className="relative max-h-[70vh] min-w-0 overflow-auto overscroll-contain"
+    >
+      <table className="w-full min-w-[980px] border-collapse text-left">
         <caption className="sr-only">
-          Every trainee, with their programme, progress and account state
+          Every trainee, with their position, test record and account state
         </caption>
         <thead>
-          <tr className="bg-bg">
+          <tr>
             <th scope="col" className={th}>
               Trainee
-            </th>
-            <th scope="col" className={th}>
-              Track
-            </th>
-            <th scope="col" className={th}>
-              Online
-            </th>
-            <th scope="col" className={th}>
-              Current stage
-            </th>
-            <th scope="col" className={th}>
-              Progress
-            </th>
-            <th scope="col" className={th}>
-              Attempts
-            </th>
-            <th scope="col" className={th}>
-              Fails
-            </th>
-            <th scope="col" className={th}>
-              Best average
-            </th>
-            <th scope="col" className={th}>
-              Last activity
             </th>
             <th scope="col" className={th}>
               Status
             </th>
             <th scope="col" className={th}>
-              Actions
+              Track
+            </th>
+            <th scope="col" className={th}>
+              Current position
+            </th>
+            <th scope="col" className={th}>
+              Test stats (attempts · best %)
+            </th>
+            {showStage1Auth ? (
+              <th scope="col" className={th}>
+                Stage 1 auth
+              </th>
+            ) : null}
+            <th scope="col" className={th}>
+              Account
             </th>
           </tr>
         </thead>
         <tbody>
           {trainees.map((trainee) => (
-            <Row key={trainee.id} trainee={trainee} />
+            <Row
+              key={trainee.id}
+              trainee={trainee}
+              isSelf={selfId !== null && trainee.id === selfId}
+              showStage1={showStage1Auth}
+            />
           ))}
         </tbody>
       </table>

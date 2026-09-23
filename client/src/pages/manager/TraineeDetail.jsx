@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom';
+import { useAuth } from '../../auth/AuthProvider.jsx';
 import ManagerLayout from '../../components/manager/ManagerLayout.jsx';
 import OnlineDot from '../../components/manager/OnlineDot.jsx';
 import StageChips from '../../components/manager/StageChips.jsx';
@@ -28,6 +29,7 @@ function Fact({ label, children }) {
 
 export default function TraineeDetail() {
   const { id } = useParams();
+  const { me } = useAuth();
   const query = useTrainee(id);
 
   if (query.isError) {
@@ -80,7 +82,11 @@ export default function TraineeDetail() {
               )}
             </p>
           </div>
-          <TraineeActions trainee={trainee} layout="stack" />
+          <TraineeActions
+            trainee={trainee}
+            layout="stack"
+            isSelf={me !== null && trainee.id === me.id}
+          />
         </div>
 
         <dl data-testid="trainee-facts" className="mt-6 grid gap-4 sm:grid-cols-3 xl:grid-cols-6">

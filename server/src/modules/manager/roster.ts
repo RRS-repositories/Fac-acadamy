@@ -3,6 +3,7 @@ import { TraineeStatusSchema } from '@fac-academy/shared';
 import type {
   RosterCounts,
   RosterResponse,
+  RosterStage,
   RosterTrainee,
   TraineeStage,
   TraineeStatus,
@@ -12,10 +13,12 @@ import { toTrackCode } from '../training/repo.js';
 import { toIso, toNumber } from './deps.js';
 import type { ManagerDeps } from './deps.js';
 
-// The manager roster (S07 task 1). One query for the whole list: the view
-// academy.v_trainee_overview supplies identity, online-now and last activity,
-// and four LATERAL blocks add what it does not carry — where the trainee is in
-// THEIR track, and their attempt totals. No per-trainee round trip, ever.
+// The manager roster (S07 task 1). Two queries for the whole list, however
+// long it is. The first reads the view academy.v_trainee_overview for
+// identity, online-now and last activity, with three LATERAL blocks for what
+// it does not carry — where the trainee is in THEIR track, and their attempt
+// totals. The second (loadRosterStages) fetches the per-stage chips for every
+// trainee at once. No per-trainee round trip, ever.
 //
 // The unlock rule is not re-implemented here. The roster only needs "the first
 // visible stage they have not passed"; the trainee detail below asks the real
@@ -49,9 +52,11 @@ interface RosterRow {
   stages_done: number;
   current_code: string | null;
   current_title: string | null;
+  current_display_num: string | null;
   attempts: number;
   fails: number;
   best_average: string | null;
+  stage1_authorised: boolean | null;
 }
 
 const ROSTER_SQL = `
@@ -65,10 +70,12 @@ const ROSTER_SQL = `
          o.last_seen_at,
          o.last_activity,
          o.started_at,
+         o.stage1_authorised,
          st.stages_total,
          st.stages_done,
          st.current_code,
          st.current_title,
+         st.current_display_num,
          qa.attempts,
          qa.fails,
          ba.best_average
@@ -79,7 +86,9 @@ const ROSTER_SQL = `
              (array_agg(s.code ORDER BY v.position)
                 FILTER (WHERE c.trainee_id IS NULL))[1]               AS current_code,
              (array_agg(s.title ORDER BY v.position)
-                FILTER (WHERE c.trainee_id IS NULL))[1]               AS current_title
+                FILTER (WHERE c.trainee_id IS NULL))[1]               AS current_title,
+             (array_agg(COALESCE(s.display_num, s.code) ORDER BY v.position)
+                FILTER (WHERE c.trainee_id IS NULL))[1]               AS current_display_num
         FROM academy.track_visibility v
         JOIN academy.stages s ON s.id = v.stage_id AND s.is_active
         LEFT JOIN academy.stage_completions c
@@ -118,7 +127,79 @@ function toStatus(value: string): TraineeStatus {
   return parsed.success ? parsed.data : 'ACTIVE';
 }
 
-function toRosterTrainee(r: RosterRow): RosterTrainee {
+interface RosterStageRow {
+  trainee_id: string;
+  code: string;
+  display_num: string;
+  attempts: number;
+  fails: number;
+  best: string | null;
+  passed: boolean;
+}
+
+/**
+ * The per-stage chips for EVERY trainee on the page, in ONE query — the same
+ * shape export.ts uses for the CSV, never a query per row. Stages with no
+ * attempt are left out: a chip says what someone has done, not what they have
+ * yet to do, so a roster of 40 people carries 40 short lists and not 40 × 30.
+ */
+async function loadRosterStages(
+  db: Db,
+  traineeIds: readonly number[],
+): Promise<Map<number, RosterStage[]>> {
+  const out = new Map<number, RosterStage[]>();
+  if (traineeIds.length === 0) return out;
+  const { rows } = await db.query<RosterStageRow>(
+    // The attempts are summed ONCE for the whole page, then joined back to
+    // each trainee's visible stages. An inner join is the "only stages with
+    // attempts" rule, so nothing has to be filtered afterwards.
+    `WITH people AS (
+       SELECT t.id, t.track FROM academy.trainees t WHERE t.id = ANY($1::bigint[])
+     ),
+     sat AS (
+       SELECT a.trainee_id,
+              q.stage_id,
+              count(*)::int                             AS attempts,
+              count(*) FILTER (WHERE NOT a.passed)::int AS fails,
+              max(a.score_pct)                          AS best
+         FROM academy.quiz_attempts a
+         JOIN academy.quizzes q ON q.id = a.quiz_id
+        WHERE a.trainee_id = ANY($1::bigint[])
+        GROUP BY a.trainee_id, q.stage_id
+     )
+     SELECT p.id                                  AS trainee_id,
+            s.code,
+            COALESCE(s.display_num, s.code)       AS display_num,
+            sat.attempts,
+            sat.fails,
+            sat.best,
+            (c.trainee_id IS NOT NULL)            AS passed
+       FROM people p
+       JOIN academy.track_visibility v ON v.track_code = p.track
+       JOIN academy.stages s ON s.id = v.stage_id AND s.is_active
+       JOIN sat ON sat.trainee_id = p.id AND sat.stage_id = s.id
+       LEFT JOIN academy.stage_completions c
+              ON c.trainee_id = p.id AND c.stage_id = s.id
+      ORDER BY p.id, v.position`,
+    [traineeIds],
+  );
+  for (const r of rows) {
+    const id = Number(r.trainee_id);
+    const list = out.get(id) ?? [];
+    list.push({
+      code: r.code,
+      displayNum: r.display_num,
+      attempts: r.attempts,
+      fails: r.fails,
+      best: toNumber(r.best),
+      passed: r.passed,
+    });
+    out.set(id, list);
+  }
+  return out;
+}
+
+function toRosterTrainee(r: RosterRow, stages: RosterStage[] = []): RosterTrainee {
   return {
     id: Number(r.id),
     fullName: r.full_name,
@@ -133,9 +214,15 @@ function toRosterTrainee(r: RosterRow): RosterTrainee {
     stagesDone: r.stages_done,
     currentStageCode: r.current_code,
     currentStageTitle: r.current_title,
+    currentStageDisplayNum: r.current_display_num,
     attempts: r.attempts,
     fails: r.fails,
     bestAverage: toNumber(r.best_average),
+    stage1Authorised: r.stage1_authorised === true,
+    // The query already scopes the chips to this trainee's track; the slice is
+    // the belt on the braces, so one row can never render more chips than the
+    // track has stages.
+    stages: stages.slice(0, r.stages_total),
     startedAt: toIso(r.started_at) ?? '',
   };
 }
@@ -159,7 +246,13 @@ export async function loadRoster(db: Db, filters: RosterFilters = {}): Promise<R
     filters.id ?? null,
     ROSTER_LIMIT,
   ]);
-  return rows.map(toRosterTrainee);
+  // Two queries for the whole page, whatever its size: the roster itself and
+  // the per-stage chips for everyone on it.
+  const stages = await loadRosterStages(
+    db,
+    rows.map((r) => Number(r.id)),
+  );
+  return rows.map((r) => toRosterTrainee(r, stages.get(Number(r.id)) ?? []));
 }
 
 export async function buildRoster(db: Db, filters: RosterFilters = {}): Promise<RosterResponse> {

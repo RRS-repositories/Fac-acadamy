@@ -40,6 +40,29 @@ export const ROSTER_REFRESH_MS = 30_000;
 /** Server-generated, audited CSV. A plain authenticated GET, so a link is enough. */
 export const EXPORT_CSV_PATH = '/api/manager/export.csv';
 
+/**
+ * What went wrong, said plainly, for the account controls on the roster.
+ *
+ * "That didn't save" told a manager nothing: the commonest failure by far is
+ * trying to disable your own account, which the server refuses on purpose, and
+ * a generic line made that look like a bug. Each code now has its own sentence
+ * and, where the manager can act on it, says what to do next.
+ */
+export const ACTION_ERROR_MESSAGES = {
+  invalid_request: "You can't disable your own account.",
+  forbidden: 'Only a manager can do that.',
+  not_found: 'That trainee no longer exists. Refresh the page.',
+  rate_limited: 'Too many changes at once. Wait a moment.',
+  not_signed_in: 'Your session ended. Sign in again.',
+  network: "Couldn't reach the server.",
+  flag_off: "The training portal isn't open yet.",
+};
+
+/** The sentence for one failed action; a last-resort line for anything else. */
+export function actionErrorMessage(error) {
+  return ACTION_ERROR_MESSAGES[error?.code] ?? 'That change did not save. Please try again.';
+}
+
 const MANAGER_ERRORS = new Set(MANAGER_ERROR_CODES);
 
 async function readJson(res) {
