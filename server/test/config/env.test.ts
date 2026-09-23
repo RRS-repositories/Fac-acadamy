@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../../src/config/env.js';
 import {
   CRM_KEY_VALUE,
+  MEDIA_ROOT_VALUE,
   MFA_KEY_VALUE,
   REQUIRED_VARS,
   SECRET_TOKEN_VALUE,
@@ -151,6 +152,28 @@ describe('loadConfig', () => {
     const err = configError(without('DB_HOST'));
     expect(err.message).not.toContain(MFA_KEY_VALUE);
     expect(err.message).not.toContain(CRM_KEY_VALUE);
+  });
+
+  it('requires MEDIA_ROOT and refuses a relative path', () => {
+    // Media lives on the server's own disk (D15). A relative path would follow
+    // whatever working directory pm2 happened to start in, so it is refused.
+    expect(loadConfig(validEnv()).MEDIA_ROOT).toBe(MEDIA_ROOT_VALUE);
+    expect(configError({ ...validEnv(), MEDIA_ROOT: './media' }).invalid).toEqual(['MEDIA_ROOT']);
+    expect(configError({ ...validEnv(), MEDIA_ROOT: 'media/recordings' }).invalid).toEqual([
+      'MEDIA_ROOT',
+    ]);
+    const err = configError({ ...validEnv(), MEDIA_ROOT: '  ' });
+    expect(err.missing).toEqual(['MEDIA_ROOT']);
+  });
+
+  it('defaults MEDIA_MAX_UPLOAD_MB to 200 and rejects a silly value', () => {
+    expect(loadConfig(validEnv()).MEDIA_MAX_UPLOAD_MB).toBe(200);
+    expect(loadConfig({ ...validEnv(), MEDIA_MAX_UPLOAD_MB: '500' }).MEDIA_MAX_UPLOAD_MB).toBe(500);
+    for (const bad of ['0', '-5', 'lots', '1.5']) {
+      expect(configError({ ...validEnv(), MEDIA_MAX_UPLOAD_MB: bad }).invalid).toEqual([
+        'MEDIA_MAX_UPLOAD_MB',
+      ]);
+    }
   });
 
   it('defaults COOKIE_SECURE to true in production and false elsewhere', () => {

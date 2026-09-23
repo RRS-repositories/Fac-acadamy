@@ -11,11 +11,13 @@ import type { Producers } from '../../queues/producers.js';
 export type Db = Pool | PoolClient;
 
 /**
- * S06 flips this to true. Until the media work lands, "coming soon" slots are
- * the only recordings most stages have (D4), so recordings never block a quiz.
+ * S06 turned this on: a stage's quiz now needs every lesson read AND every
+ * recording that HAS media listened right through (server-proved, see
+ * media/coverage.ts). Slots with no `media_key` — the "coming soon" entries of
+ * decision D4 — are never counted, so they can never hold a quiz up.
  * One constant, used by the stage detail and by the quiz router.
  */
-export const RECORDINGS_GATE_ENABLED = false;
+export const RECORDINGS_GATE_ENABLED = true;
 
 export interface TrainingDeps extends RequireAuthDeps {
   db: Pool;
@@ -217,7 +219,7 @@ export async function loadStageCounts(
             (SELECT count(*) FROM academy.call_recordings r
               WHERE r.stage_id = s.id AND r.is_active) AS recordings,
             (SELECT count(*) FROM academy.call_recordings r
-              WHERE r.stage_id = s.id AND r.is_active AND r.s3_key IS NOT NULL) AS with_media
+              WHERE r.stage_id = s.id AND r.is_active AND r.media_key IS NOT NULL) AS with_media
        FROM academy.stages s
       WHERE s.id = ANY($1::bigint[])`,
     [stageIds],
@@ -286,7 +288,7 @@ export async function loadRecordings(
             COALESCE(r.description, '') AS description,
             r.duration_secs,
             r.media_type,
-            (r.s3_key IS NULL) AS coming_soon,
+            (r.media_key IS NULL) AS coming_soon,
             (lp.completed_at IS NOT NULL) AS listened
        FROM academy.call_recordings r
        LEFT JOIN academy.listen_progress lp
@@ -342,11 +344,11 @@ export async function loadQuizPrerequisite(
                  ON p.lesson_id = l.id AND p.trainee_id = $1
               WHERE l.stage_id = $2) AS lessons_read,
             (SELECT count(*) FROM academy.call_recordings r
-              WHERE r.stage_id = $2 AND r.is_active AND r.s3_key IS NOT NULL) AS media_total,
+              WHERE r.stage_id = $2 AND r.is_active AND r.media_key IS NOT NULL) AS media_total,
             (SELECT count(*) FROM academy.call_recordings r
                JOIN academy.listen_progress lp
                  ON lp.recording_id = r.id AND lp.trainee_id = $1
-              WHERE r.stage_id = $2 AND r.is_active AND r.s3_key IS NOT NULL
+              WHERE r.stage_id = $2 AND r.is_active AND r.media_key IS NOT NULL
                 AND lp.completed_at IS NOT NULL) AS media_listened`,
     [traineeId, stageId],
   );

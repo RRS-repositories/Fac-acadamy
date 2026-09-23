@@ -110,14 +110,26 @@ describe('Login', () => {
     mockFetch({
       'POST /api/auth/login': [200, { next: 'challenge' }],
       'POST /api/auth/mfa': [200, { me: MANAGER }],
+      // The manager lands on the roster (S07); its own screen tests live in
+      // Manager.test.jsx, so an empty roster is enough here.
+      'GET /api/manager/roster?includeDisabled=true': [
+        200,
+        {
+          trainees: [],
+          counts: { total: 0, active: 0, disabled: 0, onlineNow: 0, waitingForTrack: 0 },
+        },
+      ],
+      'GET /api/manager/stuck': [200, { trainees: [] }],
+      'GET /api/manager/config': [
+        200,
+        { stage1AuthRequired: true, academyV2: true, provisioning: false },
+      ],
     });
     await openLogin('/login?next=%2Fmanager');
     signIn('manager.b@example.com');
     await screen.findByRole('heading', { name: 'Enter your authenticator code' });
     await enterCode('Verify and sign in');
-    expect(
-      await screen.findByRole('heading', { name: 'Management area — coming in Section 07' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
   });
 
   it('ignores a ?next= that points off-site', async () => {

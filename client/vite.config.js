@@ -22,5 +22,8 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './test/setup.js',
     globals: false,
+    // One file at a time: several jsdom suites in parallel on a slow disk
+    // time out spuriously. The server config does the same.
+    fileParallelism: false,
   },
 });

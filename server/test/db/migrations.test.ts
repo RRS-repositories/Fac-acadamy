@@ -1,4 +1,4 @@
-// Integration test: applies 0000-0004 to a THROW-AWAY database and checks the
+// Integration test: applies 0000-0005 to a THROW-AWAY database and checks the
 // result. Runs only when MIGRATION_TEST_DB_NAME is set (CI and the local test
 // database set it). It DROPS the academy schema in that database: never point
 // it at anything that matters.
@@ -52,7 +52,7 @@ function tablesCreatedIn(filename: string): string[] {
 
 const quiet = () => undefined;
 
-describe.skipIf(!TEST_DB)('migrations 0000-0004 on a fresh database', () => {
+describe.skipIf(!TEST_DB)('migrations 0000-0005 on a fresh database', () => {
   let settings: DbSettings;
   let client: pg.Client;
 
@@ -87,7 +87,56 @@ describe.skipIf(!TEST_DB)('migrations 0000-0004 on a fresh database', () => {
       '0002_academy_v2_alignment.sql',
       '0003_seed_support.sql',
       '0004_auth_support.sql',
+      '0005_media.sql',
     ]);
+  });
+
+  it('renames s3_key to media_key and adds the file facts (0005)', async () => {
+    const { rows } = await client.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'academy' AND table_name = 'call_recordings'
+        ORDER BY column_name`,
+    );
+    const columns = rows.map((r) => r.column_name);
+    expect(columns).toContain('media_key');
+    expect(columns).not.toContain('s3_key');
+    for (const added of ['byte_size', 'content_type', 'checksum_sha256', 'uploaded_at']) {
+      expect(columns).toContain(added);
+    }
+    // D4: a "coming soon" slot has no media, so the column stays nullable.
+    const nullable = await client.query<{ is_nullable: string }>(
+      `SELECT is_nullable FROM information_schema.columns
+        WHERE table_schema = 'academy' AND table_name = 'call_recordings'
+          AND column_name = 'media_key'`,
+    );
+    expect(nullable.rows[0]?.is_nullable).toBe('YES');
+  });
+
+  it('refuses a media_key that could escape the media folder (0005)', async () => {
+    await client.query('BEGIN');
+    try {
+      const slot = async (key: string | null) =>
+        client.query(
+          `INSERT INTO call_recordings (category, title, media_key, duration_secs)
+           VALUES ('INDUCTION', 'Key check', $1, 10)`,
+          [key],
+        );
+      await slot('academy/media/CS_2_UTL.mp3'); // the shape the seed writes
+      await slot(null); // a "coming soon" slot
+      for (const bad of [
+        'academy/media/../../etc/passwd',
+        '/etc/passwd',
+        'academy\\media\\x.mp3',
+        'academy/media/',
+        'academy/media/x y.mp3',
+      ]) {
+        await client.query('SAVEPOINT bad_key');
+        await expect(slot(bad)).rejects.toMatchObject({ code: '23514' }); // check_violation
+        await client.query('ROLLBACK TO SAVEPOINT bad_key');
+      }
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 
   it('creates every table named in 0001 (19) and the 0002 tables', async () => {
@@ -157,7 +206,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0004 on a fresh database', () => {
   it('applies nothing on a second run', async () => {
     const res = await applyMigrations({ commit: true, expectDb: TEST_DB, settings, log: quiet });
     expect(res.applied).toEqual([]);
-    expect(res.appliedBefore).toBe(5);
+    expect(res.appliedBefore).toBe(6);
   });
 
   it('dry run on an up-to-date database lists 0 pending', async () => {

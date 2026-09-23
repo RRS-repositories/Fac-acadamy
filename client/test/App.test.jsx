@@ -28,6 +28,23 @@ const TRACK = {
   ],
 };
 
+// Enough of the manager API (S07) for the routing checks: the roster screen
+// itself is covered in Manager.test.jsx.
+const MANAGER_ROUTES = {
+  'GET /api/manager/roster?includeDisabled=true': [
+    200,
+    {
+      trainees: [],
+      counts: { total: 0, active: 0, disabled: 0, onlineNow: 0, waitingForTrack: 0 },
+    },
+  ],
+  'GET /api/manager/stuck': [200, { trainees: [] }],
+  'GET /api/manager/config': [
+    200,
+    { stage1AuthRequired: true, academyV2: true, provisioning: false },
+  ],
+};
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -53,12 +70,13 @@ describe('App routing and auth guards', () => {
     mockFetch({
       'POST /api/auth/login': [200, { next: 'challenge' }],
       'POST /api/auth/mfa': [200, { me: MANAGER }],
+      ...MANAGER_ROUTES,
     });
     renderApp('/manager');
     expect(
       await screen.findByRole('heading', { name: 'Sign in to start training' }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/coming in Section 07/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Trainee roster' })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Work email'), {
       target: { value: 'manager.b@example.com' },
@@ -68,26 +86,23 @@ describe('App routing and auth guards', () => {
     await screen.findByRole('heading', { name: 'Enter your authenticator code' });
     fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Verify and sign in' }));
-    expect(
-      await screen.findByRole('heading', { name: 'Management area — coming in Section 07' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
   });
 
   it('RequireManager blocks STAFF with a plain message and no manager content', async () => {
-    mockFetch({ 'GET /api/me': [200, { me: STAFF }] });
+    mockFetch({ 'GET /api/me': [200, { me: STAFF }], ...MANAGER_ROUTES });
     renderApp('/manager');
     expect(
       await screen.findByRole('heading', { name: "You don't have access to this page" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/coming in Section 07/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Trainee roster' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('RequireManager lets a MANAGER in', async () => {
-    mockFetch({ 'GET /api/me': [200, { me: MANAGER }] });
+    mockFetch({ 'GET /api/me': [200, { me: MANAGER }], ...MANAGER_ROUTES });
     renderApp('/manager');
-    expect(
-      await screen.findByRole('heading', { name: 'Management area — coming in Section 07' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
   });
 
   it('no track yet: shows the waiting screen, then the home page once a track is set', async () => {

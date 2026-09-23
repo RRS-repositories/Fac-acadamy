@@ -6,6 +6,9 @@ import RequireAuth from './auth/RequireAuth.jsx';
 import RequireManager from './auth/RequireManager.jsx';
 import Login from './pages/auth/Login.jsx';
 import ManagerHome from './pages/manager/ManagerHome.jsx';
+import StuckList from './pages/manager/StuckList.jsx';
+import TraineeDetail from './pages/manager/TraineeDetail.jsx';
+import TrackPreview from './pages/manager/TrackPreview.jsx';
 import NotFound from './pages/NotFound.jsx';
 import Dashboard from './pages/training/Dashboard.jsx';
 import Lesson from './pages/training/Lesson.jsx';
@@ -53,11 +56,47 @@ export default function App() {
               </RequireAuth>
             }
           />
+          {/* The management area (S07). Every one of these is inside
+              RequireManager: a staff session renders the no-access message and
+              fires no manager request. The server checks the role again on
+              every call. */}
           <Route
             path="/manager"
             element={
               <RequireManager>
                 <ManagerHome />
+              </RequireManager>
+            }
+          />
+          <Route
+            path="/manager/stuck"
+            element={
+              <RequireManager>
+                <StuckList />
+              </RequireManager>
+            }
+          />
+          <Route
+            path="/manager/trainee/:id"
+            element={
+              <RequireManager>
+                <TraineeDetail />
+              </RequireManager>
+            }
+          />
+          <Route
+            path="/manager/preview"
+            element={
+              <RequireManager>
+                <TrackPreview />
+              </RequireManager>
+            }
+          />
+          <Route
+            path="/manager/preview/:track"
+            element={
+              <RequireManager>
+                <TrackPreview />
               </RequireManager>
             }
           />

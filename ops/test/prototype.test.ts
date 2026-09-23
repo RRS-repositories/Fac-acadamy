@@ -1,7 +1,7 @@
 // Unit tests for ops/seed/prototype.ts against a tiny INVENTED prototype.
 // Nothing here comes from the real prototype: every string is made up.
 import { describe, expect, it } from 'vitest';
-import { classifyStage, mediaS3Key, recordingCode } from '../seed/seed-content.js';
+import { classifyStage, mediaKeyFor, recordingCode } from '../seed/seed-content.js';
 import {
   parsePrototypeHtml,
   PrototypeError,
@@ -243,6 +243,6 @@ describe('seed mapping helpers', () => {
 
   it('builds stable recording codes and S3 keys', () => {
     expect(recordingCode('s4', 1)).toBe('s4-rec1');
-    expect(mediaS3Key('fake_1.mp3')).toBe('academy/media/fake_1.mp3');
+    expect(mediaKeyFor('fake_1.mp3')).toBe('academy/media/fake_1.mp3');
   });
 });

@@ -7,7 +7,10 @@ describe('mock CRM client', () => {
   });
 
   it('lists only invented @example.com accounts, without passwords', () => {
-    expect(MOCK_CRM_ACCOUNTS).toHaveLength(5);
+    // 5 sign-in scenarios + the 2 shot.* accounts automated runs use, so a
+    // script can never re-enrol a person's authenticator.
+    expect(MOCK_CRM_ACCOUNTS).toHaveLength(7);
+    expect(MOCK_CRM_ACCOUNTS.filter((a) => a.email.startsWith('shot.'))).toHaveLength(2);
     for (const a of MOCK_CRM_ACCOUNTS) {
       expect(a.email).toMatch(/@example\.com$/);
       expect(a).not.toHaveProperty('password');

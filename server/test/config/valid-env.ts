@@ -5,6 +5,14 @@ export const CRM_KEY_VALUE = 'crm-key-synthetic-0123456789abcdef-0123';
 /** base64 of 32 synthetic bytes (0x01 x 32). */
 export const MFA_KEY_VALUE = Buffer.alloc(32, 1).toString('base64');
 
+/**
+ * An absolute path that exists on neither platform's disk. loadConfig only
+ * checks the SHAPE of MEDIA_ROOT (set, and absolute); the folder itself is
+ * checked at start-up by media/root.ts, so these tests never touch a disk.
+ */
+export const MEDIA_ROOT_VALUE =
+  process.platform === 'win32' ? 'C:\\academy-media-synthetic' : '/srv/academy-media-synthetic';
+
 export function validEnv(): Record<string, string> {
   return {
     NODE_ENV: 'test',
@@ -21,8 +29,7 @@ export function validEnv(): Record<string, string> {
     MFA_ENCRYPTION_KEY: MFA_KEY_VALUE,
     SES_REGION: 'eu-west-2',
     SES_SENDER: 'academy@example.com',
-    S3_BUCKET: 'academy-test',
-    S3_REGION: 'eu-west-2',
+    MEDIA_ROOT: MEDIA_ROOT_VALUE,
     MATTERMOST_URL: 'http://localhost:8065',
     MATTERMOST_BOT_TOKEN: SECRET_TOKEN_VALUE,
     MATTERMOST_IT_CHANNEL_ID: 'channel-synthetic',
@@ -44,8 +51,7 @@ export const REQUIRED_VARS = [
   'MFA_ENCRYPTION_KEY',
   'SES_REGION',
   'SES_SENDER',
-  'S3_BUCKET',
-  'S3_REGION',
+  'MEDIA_ROOT',
   'MATTERMOST_URL',
   'MATTERMOST_BOT_TOKEN',
   'MATTERMOST_IT_CHANNEL_ID',

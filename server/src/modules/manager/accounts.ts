@@ -1,56 +1,29 @@
 import { Router } from 'express';
-import type { Request, Response } from 'express';
-import type { Pool } from 'pg';
 import { z } from 'zod';
 import { TRACK_CODES } from '@fac-academy/shared';
 import type { TrackCode } from '@fac-academy/shared';
-import { authOf, requireAuth, requireRole } from '../../middleware/auth.js';
-import type { RequireAuthDeps } from '../../middleware/auth.js';
+import { authOf } from '../../middleware/auth.js';
 import { actor, writeAudit } from '../audit/audit.js';
-import type { SessionManager } from '../auth/sessions.js';
+import { context, fail, targetId } from './deps.js';
+import type { ManagerDeps } from './deps.js';
 
-// Manager account controls (S03 task 5, decision D13). Every route here is
-// behind requireAuth + requireRole('MANAGER'). Disable is instant: the flag
-// is set, every session of that trainee is deleted, and requireAuth re-checks
-// the flag on every request anyway.
+// Manager account controls (S03 task 5, decision D13). The router is mounted
+// by routes.ts, which has already applied requireAuth + requireRole('MANAGER').
+// Disable is instant: the flag is set, every session of that trainee is
+// deleted, and requireAuth re-checks the flag on every request anyway.
+//
+// Every action here writes exactly one audit row carrying the manager's
+// identity (S07 task 7).
 
-export interface ManagerDeps extends RequireAuthDeps {
-  db: Pool;
-  sessions: SessionManager;
-}
+export type { ManagerDeps };
 
-const IdParamSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const TrackBodySchema = z.object({
   track: z.enum(TRACK_CODES as [TrackCode, ...TrackCode[]]),
 });
 
-function targetId(req: Request, res: Response): number | null {
-  const parsed = IdParamSchema.safeParse(req.params.id);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'invalid_request' });
-    return null;
-  }
-  return parsed.data;
-}
-
-function notFound(res: Response): void {
-  res.status(404).json({ error: 'not_found' });
-}
-
-function context(req: Request): { ip: string; userAgent: string | undefined } {
-  return { ip: req.ip ?? '', userAgent: req.get('user-agent')?.slice(0, 300) };
-}
-
-export function managerRouter(deps: ManagerDeps): Router {
+export function accountsRouter(deps: ManagerDeps): Router {
   const router = Router();
   const { db } = deps;
-
-  router.use(requireAuth(deps), requireRole('MANAGER'));
-
-  // A trivial manager-only route (the checklist's "staff → 403" probe).
-  router.get('/ping', (_req, res) => {
-    res.status(204).end();
-  });
 
   router.post('/trainees/:id/disable', async (req, res) => {
     const id = targetId(req, res);
@@ -58,7 +31,7 @@ export function managerRouter(deps: ManagerDeps): Router {
     const manager = authOf(req);
     if (id === manager.traineeId) {
       // A manager cannot lock themselves out; another manager (or IT) can.
-      res.status(400).json({ error: 'invalid_request' });
+      fail(res, 400, 'invalid_request');
       return;
     }
     const { rows } = await db.query<{ was_disabled: boolean }>(
@@ -72,7 +45,7 @@ export function managerRouter(deps: ManagerDeps): Router {
       [id, manager.traineeId],
     );
     if (rows[0] === undefined) {
-      notFound(res);
+      fail(res, 404, 'not_found');
       return;
     }
     const revoked = await deps.sessions.revokeAll(id);
@@ -98,7 +71,7 @@ export function managerRouter(deps: ManagerDeps): Router {
       [id],
     );
     if (rows[0] === undefined) {
-      notFound(res);
+      fail(res, 404, 'not_found');
       return;
     }
     await writeAudit(db, {
@@ -115,7 +88,7 @@ export function managerRouter(deps: ManagerDeps): Router {
     if (id === null) return;
     const body = TrackBodySchema.safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: 'invalid_request' });
+      fail(res, 400, 'invalid_request');
       return;
     }
     const manager = authOf(req);
@@ -127,9 +100,12 @@ export function managerRouter(deps: ManagerDeps): Router {
       [id, body.data.track],
     );
     if (rows[0] === undefined) {
-      notFound(res);
+      fail(res, 404, 'not_found');
       return;
     }
+    // The visible stage list is derived from trainees.track through
+    // academy.track_visibility, so writing the column IS the recompute: the
+    // trainee's next request sees the new track's stages and nothing else.
     await writeAudit(db, {
       traineeId: id,
       eventType: 'TRACK_ASSIGNED',

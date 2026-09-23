@@ -90,6 +90,17 @@ export default function TrainingLayout({ currentCode = null, children }) {
         )}
 
         <div className="mt-4 border-t border-white/10 px-6 pt-4 text-[11px] text-white/40">
+          {/* Managers reach their own area from their own training screens.
+              A staff session never renders this link — and the route behind it
+              renders nothing for them either. */}
+          {me?.role === 'MANAGER' ? (
+            <Link
+              to="/manager"
+              className="mb-2.5 block text-[12.5px] font-semibold text-white/65 underline"
+            >
+              Management
+            </Link>
+          ) : null}
           <Link
             to="/status-guide"
             className="mb-2.5 block text-[12.5px] font-semibold text-white/65 underline"

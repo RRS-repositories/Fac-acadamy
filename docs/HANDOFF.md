@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **S06 (Media)** — extract the 6 call MP3s straight to private S3, upload the FOS video after Brad's PII review, signed URLs + a Range-aware stream proxy, no-seek players, listen coverage, and flipping `RECORDINGS_GATE_ENABLED` on. S05 verified locally 23 Sep: 372 tests; 8 screenshot pairs captured outside the repo for Brad |
+| Next step | **S08 (Provisioning & comms)** — Mattermost approval flow in shadow mode first, SES emails, manager DMs, BullMQ behind the existing queue seam. Needs from Brad: the email sender, the Mattermost bot + approver list, and the CRM role for a new trainee. S06 + S07 verified locally 23 Sep: 502 tests; the 6 calls stream from disk with range support; a sped-up or one-shot 'listen' is refused; manager roster, stuck list, CSV and preview-as-track all work |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
@@ -39,6 +39,16 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 - `PROTOTYPE_PATH=<path outside repo> npx tsx ops/seed/seed-content.ts --expect-db academy_dev` (add `--dry-run` to roll back). Verify: `npx tsx ops/seed/verify-seed.ts --expect-db academy_dev`.
 - Migration 0003 adds the DEPARTMENT recording category, department metadata, `stages.sort` and the question upsert key.
 - Leak canaries in `ops/fixtures/leak-canaries.json` are hashes only.
+
+## Media (S06)
+
+- **No S3** (decision D15, 23 Sep). Every recording lives on the server's own disk under `MEDIA_ROOT` and is streamed by the API. Locally `MEDIA_ROOT=E:/RRC/fac-academy/.media` (gitignored); **the folder must be backed up like the database — the database alone no longer holds the media**.
+- Load the six call MP3s the prototype embeds: `PROTOTYPE_PATH=<outside repo> npx tsx ops/media/extract-media.ts --expect-db academy_dev` (`--dry-run` rolls back). It is idempotent: a second run reports all six `unchanged`. Run on 23 Sep — sales_1 8:42, sales_2 7:45, sale_3_ 6:12, CUSTOMER_SERVICE_1_INBOUND_UPDATE_CALL 7:01, CS_2_UTL 6:30, CS_3_CB_FOR_UPDATE 17:32; 6.4 MB in total, and every probed length matched the prototype's own.
+- **The FOS video (`video1437476061.mp4`) is NOT loaded.** It is a real portal screen recording and waits for Brad's PII review. The extractor reports it as "not embedded, not ingested" every run.
+- One new file at a time (the S11 pipeline): `npx tsx ops/media/ingest-media.ts --file "<path OUTSIDE the repo>" --stage <stageCode> --title "..." [--description "..."] [--recording-code <code>] --expect-db academy_dev`. It fills the stage's first "coming soon" slot, or adds a row; it refuses a file inside the repo and anything that is not mp3/m4a/wav/mp4.
+- Managers upload through `POST /api/manager/recordings` (raw body = the file, `stageCode`/`title`/`description` as query parameters or `x-academy-*` headers). Over `MEDIA_MAX_UPLOAD_MB` → 413, wrong type → 415, audited as `MEDIA_UPLOADED`, and it queues `transcription/transcribe` + `question-gen/draft-questions` with the new recording id.
+- Durations are probed with **music-metadata** (pure JavaScript; ffmpeg is not installed here and may not be on the server). Added to `ops/` and `server/`.
+- The two media queues produce only: the consumers arrive in S08 with BullMQ. `call_recordings.transcript_status = 'PENDING'` is the durable marker of work outstanding, and AI-drafted questions stay DRAFT until a human approves them.
 
 ## Local test databases
 
@@ -71,7 +81,7 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 | D7 | Same Postgres DB as the CRM, schema `academy`, restricted role `academy_app` |
 | D8 | Separate repo (this one); the CRM gets only small endpoint PRs |
 | D9 | Domain working assumption `academy.fastactionclaims.com`; app + API on one origin, host-only session cookie (DNS owner still to confirm) |
-| D12 | (22 Sep) S02 widens `call_recordings.category` for department recordings (e.g. the FOS video) in a new migration; the media column keeps the schema's name `s3_key` (section files say `media_key`) |
+| D12 | (22 Sep) S02 widens `call_recordings.category` for department recordings. **Superseded in part on 23 Sep (D15/D16): there is no S3 — media lives on the on-prem server under `MEDIA_ROOT`, and migration 0005 renamed `s3_key` to `media_key`.** |
 | D11 | New-starter sign-in: **approve first** (Q1). No academy-only login; provisioning is requested before day one |
 | D10 | Layout: `client/` (React SPA) · `server/` (API + worker) · `shared/` (contracts only) · `ops/` · `e2e/` |
 | D13 | (22 Sep) A first-time trainee starts with no track ("waiting for a manager to assign a track"); the manager assigns it (S07), or IT meanwhile with `ops/admin/set-track.ts` |

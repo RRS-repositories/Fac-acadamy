@@ -4,6 +4,7 @@ import { useStage, useTrack } from '../../api/training.js';
 import WaitingForTrack from '../WaitingForTrack.jsx';
 import LockedCard from '../../components/training/LockedCard.jsx';
 import ProgressBar from '../../components/training/ProgressBar.jsx';
+import NoSeekPlayer from '../../components/training/NoSeekPlayer.jsx';
 import StagePills from '../../components/training/StagePills.jsx';
 import TrainingLayout from '../../components/training/TrainingLayout.jsx';
 import {
@@ -25,66 +26,50 @@ import {
  * Reading a lesson and sitting the quiz are their own routes.
  */
 
-const QUIZ_BLOCK_REASON = {
-  lessons: 'Read every lesson in this stage to unlock the quiz.',
-  recordings: 'Listen to every call recording in this stage to unlock the quiz.',
-};
+const LESSONS_BLOCKED = 'Read every lesson in this stage to unlock the quiz.';
 
-function fmtDuration(secs) {
-  if (typeof secs !== 'number' || secs <= 0) return null;
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
+/**
+ * What the quiz is waiting for, in the trainee's words. The server decides
+ * `blockedBy`; this only puts it into a sentence, and when recordings are the
+ * hold-up it says how many are left, because "listen to every recording" is
+ * unhelpful when there is one to go.
+ */
+function quizBlockReason(quiz, listened, playable) {
+  if (quiz.blockedBy === 'lessons') return LESSONS_BLOCKED;
+  if (quiz.blockedBy !== 'recordings') return null;
+  const left = Math.max(playable - listened, 0);
+  return (
+    `Listen to every call recording in this stage to unlock the quiz — ` +
+    `${String(listened)} of ${String(playable)} done` +
+    (left === 1 ? ', one to go.' : '.')
+  );
 }
 
-function Recording({ recording }) {
-  const duration = fmtDuration(recording.durationSecs);
-
-  if (recording.comingSoon) {
-    // D4: an empty slot. Greyed out, no control, and it never blocks the quiz.
-    return (
-      <li
-        data-recording={recording.id}
-        data-coming-soon="true"
-        className={`${cardClass} flex flex-wrap items-center gap-4 px-[22px] py-[18px] opacity-[0.55]`}
-      >
-        <span
-          aria-hidden="true"
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#EEF1F5] text-base text-[#8A97A6]"
-        >
-          ▶
-        </span>
-        <span className="min-w-[200px] flex-1">
-          <span className="block text-[14.5px] font-bold text-navy">{recording.title}</span>
-          <span className="block text-[12.5px] text-muted">{recording.description}</span>
-          <span className="block text-[12.5px] text-muted">
-            This recording isn&apos;t ready yet. It won&apos;t hold up your quiz.
-          </span>
-        </span>
-        <span className={`${badgeBase} ${badgeTone.locked}`}>Coming soon</span>
-      </li>
-    );
-  }
-
+/**
+ * D4: an empty slot. Greyed out, no player, and it never blocks the quiz —
+ * which is what the last line of the card says, in as many words.
+ */
+function ComingSoonSlot({ recording }) {
   return (
     <li
       data-recording={recording.id}
-      className={`${cardClass} flex flex-wrap items-center gap-4 px-[22px] py-[18px]`}
+      data-coming-soon="true"
+      className={`${cardClass} flex flex-wrap items-center gap-4 px-[22px] py-[18px] opacity-[0.55]`}
     >
       <span
         aria-hidden="true"
-        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-navy text-base text-white"
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#EEF1F5] text-base text-[#8A97A6]"
       >
         ▶
       </span>
       <span className="min-w-[200px] flex-1">
         <span className="block text-[14.5px] font-bold text-navy">{recording.title}</span>
         <span className="block text-[12.5px] text-muted">{recording.description}</span>
-        {duration ? <span className="block text-[12px] text-muted">{duration}</span> : null}
+        <span className="block text-[12.5px] text-muted">
+          This recording isn&apos;t ready yet. It won&apos;t hold up your quiz.
+        </span>
       </span>
-      <span className={`${badgeBase} ${recording.listened ? badgeTone.done : badgeTone.active}`}>
-        {recording.listened ? 'Listened ✓' : 'To listen'}
-      </span>
+      <span className={`${badgeBase} ${badgeTone.locked}`}>Coming soon</span>
     </li>
   );
 }
@@ -180,7 +165,7 @@ export default function Stage() {
   const playable = recordings.filter((r) => !r.comingSoon);
   const listened = playable.filter((r) => r.listened).length;
   const recordingsDone = listened === playable.length;
-  const blockReason = quiz.unlocked ? null : (QUIZ_BLOCK_REASON[quiz.blockedBy] ?? null);
+  const blockReason = quiz.unlocked ? null : quizBlockReason(quiz, listened, playable.length);
   const quizTo = `/stage/${encodeURIComponent(stage.code)}/quiz`;
 
   const pills = [
@@ -279,10 +264,22 @@ export default function Stage() {
             Call recordings
           </h2>
           <ul className="flex list-none flex-col gap-3.5">
-            {recordings.map((recording) => (
-              <Recording key={recording.id} recording={recording} />
-            ))}
+            {recordings.map((recording) =>
+              recording.comingSoon ? (
+                <ComingSoonSlot key={recording.id} recording={recording} />
+              ) : (
+                <NoSeekPlayer key={recording.id} recording={recording} stageCode={stage.code} />
+              ),
+            )}
           </ul>
+          {playable.length > 0 ? (
+            <p className={`${cardClass} mt-3.5 px-[22px] py-[14px] text-[13px] text-muted`}>
+              <b className="block text-navy">Real recordings</b>
+              These are genuine FAC calls, streamed from the academy — nothing is downloaded to your
+              machine. There is deliberately no skip/seek control: pause and resume as you need, but
+              &ldquo;listened&rdquo; only registers when the full call has played through.
+            </p>
+          ) : null}
         </section>
       ) : null}
 

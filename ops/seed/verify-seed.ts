@@ -136,7 +136,7 @@ interface RecordingRow {
   category: string;
   title: string;
   description: string | null;
-  s3_key: string | null;
+  media_key: string | null;
   duration_secs: number | null;
   media_type: string;
   position: number | null;
@@ -274,7 +274,7 @@ async function main(): Promise<number> {
     const statusRows = await q<StatusRow>(`
       SELECT status, client_line, sort FROM academy.status_guide ORDER BY sort`);
     const recordings = await q<RecordingRow>(`
-      SELECT code, stage_id::text, category, title, description, s3_key, duration_secs,
+      SELECT code, stage_id::text, category, title, description, media_key, duration_secs,
              media_type, position, is_active
         FROM academy.call_recordings
        ORDER BY stage_id NULLS LAST, position NULLS LAST, id`);
@@ -540,8 +540,8 @@ async function main(): Promise<number> {
     );
 
     // ---- f. recordings ---------------------------------------------------------
-    const withKey = recordings.filter((r) => r.s3_key !== null);
-    const withoutKey = recordings.filter((r) => r.s3_key === null);
+    const withKey = recordings.filter((r) => r.media_key !== null);
+    const withoutKey = recordings.filter((r) => r.media_key === null);
     const protoRecTotal = proto.stages.reduce((n, s) => n + s.recordings.length, 0);
     const protoWithMedia = proto.stages.reduce(
       (n, s) => n + s.recordings.filter((r) => r.mediaFile !== null).length,
@@ -549,19 +549,19 @@ async function main(): Promise<number> {
     );
     add(
       'f1',
-      'Recording slots: 48 total, 7 with s3_key, 41 NULL',
+      'Recording slots: 48 total, 7 with media_key, 41 NULL',
       recordings.length === protoRecTotal &&
         recordings.length === fixture.counts.recordings &&
         withKey.length === protoWithMedia &&
         withKey.length === fixture.counts.recordingsWithMedia &&
         withoutKey.length === fixture.counts.recordings - fixture.counts.recordingsWithMedia,
-      `DB ${recordings.length} (with s3_key ${withKey.length}, NULL ${withoutKey.length}); ` +
+      `DB ${recordings.length} (with media_key ${withKey.length}, NULL ${withoutKey.length}); ` +
         `prototype ${protoRecTotal} (with media ${protoWithMedia}); ` +
         `fixture ${fixture.counts.recordings} (${fixture.counts.recordingsWithMedia})`,
     );
     const keyCounts = new Map<string, number>();
     for (const r of withKey)
-      keyCounts.set(r.s3_key ?? '', (keyCounts.get(r.s3_key ?? '') ?? 0) + 1);
+      keyCounts.set(r.media_key ?? '', (keyCounts.get(r.media_key ?? '') ?? 0) + 1);
     // The embedded MEDIA keys (audio) plus any external file a slot names (the FOS video).
     const slotMedia = proto.stages.flatMap((s) =>
       s.recordings.flatMap((r) => (r.mediaFile === null ? [] : [r.mediaFile])),
@@ -594,7 +594,7 @@ async function main(): Promise<number> {
             d !== undefined &&
             d.title === pr.title &&
             (d.description ?? '') === pr.description &&
-            d.s3_key === key &&
+            d.media_key === key &&
             d.media_type === pr.mediaType
           );
         });
@@ -661,7 +661,7 @@ async function main(): Promise<number> {
           r.category,
           r.title,
           r.description,
-          r.s3_key,
+          r.media_key,
           r.duration_secs,
           r.media_type,
           r.is_active,

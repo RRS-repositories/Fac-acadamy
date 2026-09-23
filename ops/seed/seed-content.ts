@@ -65,7 +65,11 @@ export function classifyStage(
 export const recordingCode = (stageId: string, position: number): string =>
   `${stageId}-rec${position}`;
 
-export const mediaS3Key = (file: string): string => `academy/media/${file}`;
+/**
+ * The store key for one media file. Not an S3 key any more (D15/D16): it is
+ * the path under MEDIA_ROOT on the server's own disk that the API streams from.
+ */
+export const mediaKeyFor = (file: string): string => `academy/media/${file}`;
 
 // ---------------------------------------------------------------------------
 // Counters
@@ -242,25 +246,25 @@ export async function seedContent(
       );
     }
 
-    // Recordings: 'coming soon' slots have no s3_key and no duration (0002 X6).
+    // Recordings: 'coming soon' slots have no media_key and no duration (0002 X6).
     for (const [i, r] of s.recordings.entries()) {
       await upsert(
         client,
         t.call_recordings,
         `INSERT INTO academy.call_recordings
-           (code, stage_id, position, category, title, description, s3_key, duration_secs, media_type)
+           (code, stage_id, position, category, title, description, media_key, duration_secs, media_type)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (code) DO UPDATE
            SET stage_id = EXCLUDED.stage_id, position = EXCLUDED.position,
                category = EXCLUDED.category, title = EXCLUDED.title,
-               description = EXCLUDED.description, s3_key = EXCLUDED.s3_key,
+               description = EXCLUDED.description, media_key = EXCLUDED.media_key,
                duration_secs = EXCLUDED.duration_secs, media_type = EXCLUDED.media_type
          WHERE (call_recordings.stage_id, call_recordings.position, call_recordings.category,
-                call_recordings.title, call_recordings.description, call_recordings.s3_key,
+                call_recordings.title, call_recordings.description, call_recordings.media_key,
                 call_recordings.duration_secs, call_recordings.media_type)
                IS DISTINCT FROM
                (EXCLUDED.stage_id, EXCLUDED.position, EXCLUDED.category, EXCLUDED.title,
-                EXCLUDED.description, EXCLUDED.s3_key, EXCLUDED.duration_secs, EXCLUDED.media_type)
+                EXCLUDED.description, EXCLUDED.media_key, EXCLUDED.duration_secs, EXCLUDED.media_type)
          RETURNING id, (xmax = 0) AS inserted`,
         [
           recordingCode(s.id, i + 1),
@@ -269,7 +273,7 @@ export async function seedContent(
           category,
           r.title,
           r.description,
-          r.mediaFile !== null ? mediaS3Key(r.mediaFile) : null,
+          r.mediaFile !== null ? mediaKeyFor(r.mediaFile) : null,
           r.mediaFile !== null ? r.durationSecs : null,
           r.mediaType,
         ],
@@ -476,7 +480,7 @@ async function verify(client: pg.ClientBase, proto: PrototypeData): Promise<Seed
        (SELECT count(*) FROM academy.call_recordings r JOIN academy.stages s ON s.id = r.stage_id
          WHERE s.code = ANY($1::text[])) AS recordings,
        (SELECT count(*) FROM academy.call_recordings r JOIN academy.stages s ON s.id = r.stage_id
-         WHERE s.code = ANY($1::text[]) AND r.s3_key IS NOT NULL) AS with_media`,
+         WHERE s.code = ANY($1::text[]) AND r.media_key IS NOT NULL) AS with_media`,
     [codes],
   );
   const lessons = proto.stages.reduce((a, s) => a + s.lessons.length, 0);

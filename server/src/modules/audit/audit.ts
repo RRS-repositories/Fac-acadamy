@@ -17,10 +17,22 @@ export const AUDIT_EVENTS = [
   'TRACK_ASSIGNED',
   // S04 training events.
   'LESSON_READ',
+  // S06 media. MEDIA_STREAM is written for the FIRST stream of a recording in
+  // a session (at most one an hour), never for each Range request: a player
+  // asks for a long video in dozens of pieces.
+  'MEDIA_STREAM',
+  // S06: written once, on the beacon that first proves a full listen.
+  'LISTEN_COMPLETE',
+  // S06: a manager added a recording or a screen recording to a stage.
+  'MEDIA_UPLOADED',
   'QUIZ_SUBMIT',
   'STAGE_PASS',
   'LEVEL_PASS',
   'DEPT_PASS',
+  // S07 management dashboard: one summary row per view, one row per action.
+  'MANAGER_VIEW',
+  'MANAGER_PREVIEW',
+  'EXPORT_CSV',
 ] as const;
 export type AuditEventType = (typeof AUDIT_EVENTS)[number];
 

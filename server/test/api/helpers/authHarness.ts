@@ -19,6 +19,7 @@ import type {
 import { pgConfig } from '../../../src/db/connection.js';
 import type { DbSettings } from '../../../src/db/connection.js';
 import { applyMigrations, settingsFromEnv } from '../../../src/db/migrate.js';
+import type { MediaStore } from '../../../src/media/store.js';
 import { createLoginLimiters } from '../../../src/modules/auth/limits.js';
 import type { LoginLimitSettings } from '../../../src/modules/auth/limits.js';
 import {
@@ -27,6 +28,7 @@ import {
   createSessionManager,
 } from '../../../src/modules/auth/sessions.js';
 import { codeForStep, stepAt } from '../../../src/modules/auth/totp.js';
+import type { JobQueue } from '../../../src/queues/queue.js';
 
 function envWithDotenv(): NodeJS.ProcessEnv {
   const candidates = process.env.ENV_FILE
@@ -103,6 +105,17 @@ export interface Db {
     flagEnabled?: boolean;
     /** S04 gate flag: a manager must authorise progress past stage 1. */
     stage1AuthRequired?: boolean;
+    /**
+     * S06: where media files live. Given, the app also mounts
+     * GET /api/media/:recordingId/stream; left out there is no streaming
+     * route, which is what every suite but the media one wants.
+     */
+    mediaStore?: MediaStore;
+    /**
+     * S06: given together with mediaStore, the app also mounts
+     * POST /api/manager/recordings (the manager upload).
+     */
+    mediaUpload?: { queue: JobQueue; maxUploadBytes: number };
   }): Harness;
   cleanup(): Promise<void>;
 }
@@ -142,6 +155,10 @@ export async function openTestDb(): Promise<Db> {
       const crm = new FakeCrm();
       const sessions = new MemorySessionStore(clock.now);
       const app = createApp({
+        // Spread, not `mediaStore: opts.mediaStore`: exactOptionalPropertyTypes
+        // means an explicit undefined is not the same as leaving it out.
+        ...(opts.mediaStore === undefined ? {} : { mediaStore: opts.mediaStore }),
+        ...(opts.mediaUpload === undefined ? {} : { mediaUpload: opts.mediaUpload }),
         flagEnabled: opts.flagEnabled ?? true,
         checkDb: () => Promise.resolve(true),
         checkRedis: () => Promise.resolve(false),

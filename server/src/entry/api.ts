@@ -7,6 +7,8 @@ import { createHttpCrmClient } from '../integrations/crm/crmClient.js';
 import type { CrmClient } from '../integrations/crm/crmClient.js';
 import { createMockCrmClient } from '../integrations/crm/mockCrm.js';
 import { checkRedis, createRedis } from '../integrations/redis.js';
+import { ensureMediaRoot } from '../media/root.js';
+import { createLocalMediaStore } from '../media/store.js';
 import { createLoginLimiters } from '../modules/auth/limits.js';
 import {
   MemoryPendingMfaStore,
@@ -29,6 +31,22 @@ try {
   }
   throw err;
 }
+
+// Media lives on this server's own disk (D15). The folder has to be there
+// before the first request, so it is checked — and created if missing — now,
+// and the path is logged once. A folder we cannot use is as fatal as a missing
+// environment variable: nothing would stream, and failing here says why.
+try {
+  const { created } = await ensureMediaRoot(config.MEDIA_ROOT);
+  console.log(
+    `[academy-api] media root: ${config.MEDIA_ROOT}${created ? ' (created)' : ''}` +
+      ` (max upload ${String(config.MEDIA_MAX_UPLOAD_MB)} MB)`,
+  );
+} catch (err) {
+  console.error(`[academy-api] Refusing to start: ${(err as Error).message}`);
+  process.exit(1);
+}
+const mediaStore = createLocalMediaStore(config.MEDIA_ROOT);
 
 const pool = createPool(config);
 const redis = createRedis(config.REDIS_URL);
@@ -63,8 +81,19 @@ const pendingStore = redis ? new RedisPendingMfaStore(redis) : new MemoryPending
 
 const sessions = createSessionManager({ db: pool, store: sessionStore });
 
+// One queue for the whole API: manager notifications (S04) and the media
+// follow-up jobs (S06). With no REDIS_URL this is the in-memory queue, so
+// local development runs without Redis and nothing pretends a job was sent.
+const jobQueue = createJobQueue({ redisUrl: config.REDIS_URL });
+
 const app = createApp({
   flagEnabled: config.ACADEMY_V2,
+  provisioningEnabled: config.ACADEMY_PROVISIONING,
+  mediaStore,
+  mediaUpload: {
+    queue: jobQueue,
+    maxUploadBytes: config.MEDIA_MAX_UPLOAD_MB * 1024 * 1024,
+  },
   checkDb: () => checkDb(pool),
   checkRedis: () => checkRedis(redis),
   auth: {
@@ -82,10 +111,8 @@ const app = createApp({
     sessions,
     cookieSecure: config.COOKIE_SECURE,
     stage1AuthRequired: config.STAGE1_AUTH_REQUIRED,
-    // Level and department completions enqueue the manager-notify job. With
-    // no REDIS_URL this is the in-memory queue, so local development runs
-    // without Redis and nothing pretends a DM was sent.
-    producers: createProducers(createJobQueue({ redisUrl: config.REDIS_URL })),
+    // Level and department completions enqueue the manager-notify job.
+    producers: createProducers(jobQueue),
   },
 });
 

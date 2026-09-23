@@ -2,4 +2,6 @@ export * from './constants.js';
 export * from './contracts/health.js';
 export * from './contracts/auth.js';
 export * from './contracts/training.js';
+export * from './contracts/media.js';
+export * from './contracts/manager.js';
 export * from './contracts/statusGuide.js';

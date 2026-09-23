@@ -13,7 +13,10 @@ playwright-report/
 test-results/
 blob-report/
 
-# --- Media never enters the repo (it goes to S3 only) -----------------------
+# --- Media never enters the repo (D15: it lives in MEDIA_ROOT on disk) ------
+# The local MEDIA_ROOT. Real recordings land here while developing; nothing in
+# it is ever committed.
+.media/
 *.mp3
 *.mp4
 *.wav

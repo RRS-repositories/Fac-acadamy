@@ -14,6 +14,10 @@ export const QUEUE_NAMES = {
   managerNotify: 'manager-notify',
   /** Sign-in and session events fanned out for reporting. */
   signinEvents: 'signin-events',
+  /** Speech-to-text for a newly stored recording (S06 producer, S08 consumer). */
+  transcription: 'transcription',
+  /** AI draft quiz questions from a transcript (S06 producer, S08 consumer). */
+  questionGen: 'question-gen',
   /** New-starter provisioning (S08). */
   provisioning: 'provisioning',
   /** SES email sends (S08). */

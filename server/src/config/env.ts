@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { DbSettingsSchema } from '../db/connection.js';
 import { parseMfaKey } from '../modules/auth/mfaCrypto.js';
@@ -59,11 +60,20 @@ const ConfigSchema = DbSettingsSchema.extend({
   SES_SENDER: z.string().email(),
   SMTP_URL: z.string().url().optional(),
 
-  // Media.
-  S3_BUCKET: z.string().min(1),
-  S3_REGION: z.string().min(1),
-  S3_ENDPOINT: z.string().url().optional(),
-  S3_FORCE_PATH_STYLE: bool.optional(),
+  // Media (D15: no S3 — files live on the server's own disk). MEDIA_ROOT is
+  // the folder the API streams from. It must be an absolute path: a relative
+  // one would depend on the working directory pm2 happened to start in. The
+  // folder itself is checked (and created if missing) at start-up by
+  // media/root.ts, which also logs the path once. In production it is owned by
+  // the application user and sits OUTSIDE the website folder, so nginx cannot
+  // serve it and the only way to a recording is through the API.
+  MEDIA_ROOT: z
+    .string()
+    .min(1)
+    .refine((value) => isAbsolute(value), { message: 'absolute' })
+    .transform((value) => resolve(value)),
+  // Ceiling for a manager upload (S06). Streaming is unaffected by it.
+  MEDIA_MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(10_000).default(200),
 
   // Mattermost.
   MATTERMOST_URL: z.string().url(),
@@ -101,7 +111,9 @@ const HINTS: Record<string, string> = {
   ACADEMY_PROVISIONING: "'true' or 'false'",
   AUTH_STRICT: "'true' or 'false'",
   DB_SSL: "'true' or 'false'",
-  S3_FORCE_PATH_STYLE: "'true' or 'false'",
+  MEDIA_ROOT:
+    'an absolute path to the media folder, outside the repo and outside the website folder',
+  MEDIA_MAX_UPLOAD_MB: 'a whole number of megabytes',
   NODE_ENV: 'development, test or production',
 };
 
@@ -131,7 +143,7 @@ export class ConfigError extends Error {
 }
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
-  // A blank value (`S3_ENDPOINT=` in .env) counts as unset.
+  // A blank value (`SMTP_URL=` in .env) counts as unset.
   const cleaned: Record<string, string> = {};
   for (const [key, value] of Object.entries(source)) {
     if (value !== undefined && value.trim() !== '') cleaned[key] = value;

@@ -66,6 +66,9 @@ This table is the baseline fixture for the Section 02, 04 and 10 tests.
 | D11 | **New-starter sign-in (Q1, decided 22 Sep): approve first.** IT approves the starter in Mattermost before day one, the CRM account is created, and the starter signs in to the academy with CRM credentials + TOTP. There's no academy-only login. The provisioning flow (S08) is triggered by a request raised before the starter arrives, not by their first academy sign-in. |
 | D10 | **Code layout:** `client/` (React SPA), `server/` (API + worker), `shared/` (API contracts only), plus `ops/` and `e2e/`. See §7. |
 | D13 | **First-time trainees start with no track (22 Sep).** The trainee row is created at first sign-in with no track, and the home page says "waiting for a manager to assign a track". The manager assigns it (S07 screen; the API endpoint exists from S03). Until then IT can set it with `ops/admin/set-track.ts` (audited). Migration 0004 makes `trainees.track` optional. |
+| D15 | **No S3 — media lives on the on-prem server (23 Sep).** Production is the on-prem box, so recordings and the video are stored in a folder named by `MEDIA_ROOT`, outside the repo and outside anything nginx serves. The API streams every byte after checking the session and the stage lock (Range-aware), so there are no signed URLs and no AWS SDK. The S3 checklist items ("objects private", "signed link expires at 61 s") are replaced by: the folder is not web-reachable, the API refuses without a session or on a locked stage, and path-escape attempts are rejected. Certificates (S09) store the same way. **Backups must include the media folder** — the database alone no longer holds the media. |
+| D16 | **Column rename (23 Sep):** `call_recordings.s3_key` becomes `media_key` in migration 0005, since it is no longer an S3 key (this supersedes the "keep s3_key" half of D12). |
+| D17 | **Durations without ffmpeg (23 Sep):** read with the pure-JavaScript `music-metadata` reader, so neither a developer machine nor the server needs ffmpeg installed. |
 | D14 | **Roles (22 Sep):** only the CRM role `Management` becomes MANAGER; everyone else is STAFF. An IT-set `role_overrides` row wins either way (`ops/admin/set-role-override.ts`). IT resets a lost authenticator with an audited ops command (`ops/admin/reset-mfa.ts`), not through an in-app IT role. |
 
 ---
@@ -127,7 +130,7 @@ These add to the standing `GIT-WORKFLOW-RULES` and `DATA-HYGIENE-RULES`, which a
 | API | Express, `zod` for validation, `pg`. Migrations are plain SQL files applied by our own small runner (dry run by default, `--commit` to write), the same pattern as the CRM's `scripts/apply-*-migrations.mjs` |
 | Auth | `otplib` + `qrcode` (TOTP), `express-session` + `connect-redis`, a per-user session index so disabling someone deletes their sessions at once, `rate-limiter-flexible` |
 | Jobs | BullMQ with `prefix: 'academy'`. Queue names **must not contain `:`**, because BullMQ 6 throws on them, so the spec's `academy:signin-events` becomes `signin-events` under the prefix |
-| Media | `@aws-sdk/client-s3` + presigner, `ffprobe-static` for durations, an **authenticated streaming proxy** so long audio and video don't break when a 60-second link expires mid-play |
+| Media | Files on the on-prem server's disk under `MEDIA_ROOT` (D15), streamed by the API with Range support so long audio and video play and resume; durations read with `music-metadata` (D17). No S3, no signed URLs |
 | Email | `@aws-sdk/client-sesv2` |
 | PDF | Server-side HTML → PDF (Playwright/Chromium) so certificates match the app's look |
 | Web | React 18 + Vite in **plain JSX**, **Tailwind CSS v4** (`@tailwindcss/vite`), React Router, TanStack Query. The prototype's design tokens (navy `#16324F`, orange `#E8713A`, Outfit/Inter) become Tailwind `@theme` tokens |
@@ -162,6 +165,10 @@ The supplied `fac-academy-schema.sql` (v1.0, August) predates the 9-track design
 | `0000_extensions.sql` | `CREATE EXTENSION IF NOT EXISTS citext`. The schema uses `CITEXT` but never creates it, so on its own it fails on a fresh database |
 | `0001_academy_schema.sql` | The supplied schema, byte-for-byte |
 | `0002_academy_v2_alignment.sql` | • 9 tracks: a `tracks` table + `track_visibility`, replacing the 3-value CHECKs<br>• `departments` table; `stages.code`, `stages.dept`, `stages.display_num`; `level_id` nullable for department modules<br>• `dept_completions` for department certificates<br>• `status_guide`, `role_overrides`, `trainee_mfa`, `certificates(public_id)`<br>• `call_recordings.s3_key` / `duration_secs` nullable (for "coming soon" slots) + `code`, `media_type`, `position`<br>• `listen_progress.coverage` (merged listened intervals)<br>• `v_stuck_trainees` rewritten to match S07 (7 days, 3+ fails, includes people with no attempts)<br>• `v_trainee_overview.last_activity` includes lesson reads, listens and heartbeats<br>• Grants for `academy_app` |
+
+| `0005_media.sql` | S06, on-prem media (D15/D16): renames `call_recordings.s3_key` to `media_key` (guarded, so a re-run is safe) and adds the facts about the file on disk — `byte_size`, `content_type`, `checksum_sha256`, `uploaded_at` (`uploaded_by` already existed). `media_key` stays nullable for "coming soon" slots (D4), and a CHECK enforces the same key rule the API's `assertSafeKey` does: relative, no `..`, no backslash, no leading or trailing slash |
+
+`s3_key` still appears in 0001 and 0002 because applied migrations are never edited — 0005 fixes it forward. `certificates.s3_key` is untouched and is S09's to rename.
 
 Seed data: prototype questions go in as `source='HUMAN', approval_state='APPROVED'`, with `shuffle=false` so the order matches the prototype.
 
