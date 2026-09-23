@@ -173,6 +173,28 @@ export const PreviewTrackResponseSchema = z.object({
 export type PreviewTrackResponse = z.infer<typeof PreviewTrackResponseSchema>;
 
 /**
+ * PUT /api/manager/trainees/:id/track — the body.
+ *
+ * `null` is a VALUE here, not a missing field: it takes the programme away
+ * again. A manager could assign a track and never undo it, so someone put on
+ * the wrong one stayed there. D13 already makes academy.trainees.track
+ * nullable and the trainee app already has the "waiting for a manager to
+ * assign a track" screen, so clearing the column is all it takes.
+ *
+ * Nothing is lost by it. Progress (lessons read, quiz attempts, stage and
+ * level completions) is keyed to the STAGE, never to the track, and the track
+ * only decides which stages are visible. Clear it and the trainee sees the
+ * waiting screen; assign it again and every mark is where they left it.
+ *
+ * The field is still required — `{}` is a 400, not a silent clear — because a
+ * client that forgets to send the track must never take one away by accident.
+ */
+export const AssignTrackBodySchema = z.object({
+  track: TrackSchema.nullable(),
+});
+export type AssignTrackBody = z.infer<typeof AssignTrackBodySchema>;
+
+/**
  * GET /api/manager/config — S07 task 4. The gate switch is SURFACED, not
  * editable: these are environment flags, changed by ops and nobody else.
  */

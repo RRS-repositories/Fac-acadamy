@@ -117,11 +117,16 @@ export interface CertificateEmailDelivery {
  *     handle `delivered: false`.
  */
 export function deliverCertificateEmail(
+  certificateId: number,
   message: ComposedCertificateEmail,
 ): Promise<CertificateEmailDelivery> {
+  // The recipient's address is NOT logged. Logs are read, copied and shipped
+  // about far more casually than the database is, and a certificate id says
+  // everything an operator needs — academy.certificate_emails holds the rest,
+  // which is where a real person's address belongs.
   console.log(
     `[academy-certs] certificate email composed but NOT sent (no provider chosen): ` +
-      `to=${message.to} subject=${JSON.stringify(message.subject)} ` +
+      `certificate=${String(certificateId)} subject=${JSON.stringify(message.subject)} ` +
       `attachment=${message.attachmentKey ?? 'none'}`,
   );
   return Promise.resolve({ delivered: false, provider: null, providerRef: null });

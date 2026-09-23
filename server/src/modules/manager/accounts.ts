@@ -1,7 +1,5 @@
 import { Router } from 'express';
-import { z } from 'zod';
-import { TRACK_CODES } from '@fac-academy/shared';
-import type { TrackCode } from '@fac-academy/shared';
+import { AssignTrackBodySchema } from '@fac-academy/shared';
 import { authOf } from '../../middleware/auth.js';
 import { actor, writeAudit } from '../audit/audit.js';
 import { context, fail, targetId } from './deps.js';
@@ -17,9 +15,13 @@ import type { ManagerDeps } from './deps.js';
 
 export type { ManagerDeps };
 
-const TrackBodySchema = z.object({
-  track: z.enum(TRACK_CODES as [TrackCode, ...TrackCode[]]),
-});
+/*
+ * Taking a track away is its own event, not a TRACK_ASSIGNED with a null in it:
+ * an audit trail that says "assigned: nothing" reads like a bug, and the two
+ * actions answer different questions in a review ("who put them on Sales?" vs
+ * "who took their programme away?"). academy.audit_events.event_type is plain
+ * TEXT with no CHECK constraint, so the database needs no change for it.
+ */
 
 export function accountsRouter(deps: ManagerDeps): Router {
   const router = Router();
@@ -86,18 +88,23 @@ export function accountsRouter(deps: ManagerDeps): Router {
   router.put('/trainees/:id/track', async (req, res) => {
     const id = targetId(req, res);
     if (id === null) return;
-    const body = TrackBodySchema.safeParse(req.body);
+    const body = AssignTrackBodySchema.safeParse(req.body);
     if (!body.success) {
       fail(res, 400, 'invalid_request');
       return;
     }
     const manager = authOf(req);
+    // null is a real value: it puts the trainee back to "waiting for a manager
+    // to assign a track" (D13). It deletes nothing — lesson reads, attempts and
+    // completions are keyed to the stage, not to the track — so a track removed
+    // by mistake can be given back with every mark still on it.
+    const next = body.data.track;
     const { rows } = await db.query<{ previous: string | null }>(
       `UPDATE academy.trainees t SET track = $2
        FROM academy.trainees old
        WHERE t.id = $1 AND old.id = t.id
        RETURNING old.track AS previous`,
-      [id, body.data.track],
+      [id, next],
     );
     if (rows[0] === undefined) {
       fail(res, 404, 'not_found');
@@ -106,11 +113,15 @@ export function accountsRouter(deps: ManagerDeps): Router {
     // The visible stage list is derived from trainees.track through
     // academy.track_visibility, so writing the column IS the recompute: the
     // trainee's next request sees the new track's stages and nothing else.
+    const previous = rows[0].previous;
     await writeAudit(db, {
       traineeId: id,
-      eventType: 'TRACK_ASSIGNED',
+      eventType: next === null ? 'TRACK_CLEARED' : 'TRACK_ASSIGNED',
       actor: actor.manager(manager.traineeId),
-      payload: { from: rows[0].previous, to: body.data.track, ...context(req) },
+      payload:
+        next === null
+          ? { from: previous, ...context(req) }
+          : { from: previous, to: next, ...context(req) },
     });
     res.status(204).end();
   });

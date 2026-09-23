@@ -6,7 +6,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LoginResponseSchema, MfaResponseSchema } from '@fac-academy/shared';
 import { createApp } from '../../src/app.js';
-import { createLoginLimiters } from '../../src/modules/auth/limits.js';
+import { createLoginLimiters, emailAuditKey } from '../../src/modules/auth/limits.js';
 import {
   MemoryPendingMfaStore,
   MemorySessionStore,
@@ -243,6 +243,48 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
       const res = await login(h, `nobody.${db.tag}@example.com`, 'whatever');
       expect(res.status).toBe(401);
       expect(res.body).toEqual({ error: 'invalid_credentials' });
+    });
+
+    // academy.audit_events is append-only, manager-readable and exported as
+    // CSV. A failed sign-in carries whatever was typed into the login box, so
+    // what lands in the table is a keyed hash of it and never the text itself.
+    it('a failed sign-in stores a hash of the address, never the address', async () => {
+      const h = setup();
+      // Nobody's account: whoever is at the login box types what they like,
+      // and it is kept for ever.
+      const typed = `not-a-user.${db.tag}@attacker.example`;
+      const res = await login(h, typed, 'whatever');
+      expect(res.status).toBe(401);
+
+      const { rows } = await db.pool.query<{ payload: Record<string, unknown> }>(
+        `SELECT payload FROM academy.audit_events
+          WHERE event_type = 'LOGIN_FAIL'
+            AND payload->>'emailHash' = $1`,
+        [emailAuditKey(typed, TEST_MFA_KEY)],
+      );
+      expect(rows).toHaveLength(1);
+      const payload = rows[0]!.payload;
+      expect(payload['email']).toBeUndefined();
+      expect(payload['emailHash']).toMatch(/^[0-9a-f]{32}$/);
+      // Not the address, not any part of it, and nothing that was typed.
+      const asText = JSON.stringify(payload);
+      expect(asText).not.toContain('@');
+      expect(asText).not.toContain(db.tag);
+      expect(asText).not.toContain('not-a-user');
+
+      // The hash is keyed: another key gives a different digest for the same
+      // address, so the digests cannot be rebuilt from a list of addresses.
+      expect(emailAuditKey(typed, Buffer.alloc(32, 9))).not.toBe(
+        emailAuditKey(typed, TEST_MFA_KEY),
+      );
+      // …and it is stable, which is what makes repeated attempts correlatable.
+      expect(emailAuditKey(` ${typed.toUpperCase()} `, TEST_MFA_KEY)).toBe(
+        emailAuditKey(typed, TEST_MFA_KEY),
+      );
+
+      await db.pool.query(`DELETE FROM academy.audit_events WHERE payload->>'emailHash' = $1`, [
+        emailAuditKey(typed, TEST_MFA_KEY),
+      ]);
     });
 
     it('wrong code → 401 invalid_code + MFA_FAIL; no session', async () => {

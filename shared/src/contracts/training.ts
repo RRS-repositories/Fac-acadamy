@@ -81,7 +81,12 @@ export type TrackResponse = z.infer<typeof TrackResponseSchema>;
 export const StageLessonSchema = z.object({
   id: z.number().int(),
   title: z.string(),
-  /** Sanitised lesson HTML. Served only for an unlocked stage. */
+  /**
+   * Lesson HTML, sanitised by the server against the allowlist in
+   * shared/src/lessonHtml.ts (server/src/modules/training/sanitize.ts, at read
+   * time). Served only for an unlocked stage. The browser sanitises it again
+   * with the same list before rendering it: neither side trusts the other.
+   */
   bodyHtml: z.string(),
   position: z.number().int(),
   read: z.boolean(),

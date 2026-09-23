@@ -7,6 +7,7 @@ import {
   REQUIRED_VARS,
   SECRET_TOKEN_VALUE,
   validEnv,
+  validProdEnv,
 } from './valid-env.js';
 
 function without(...names: string[]): Record<string, string> {
@@ -35,14 +36,45 @@ describe('loadConfig', () => {
     expect(cfg.DB_POOL_MAX).toBe(10);
     expect(cfg.DB_STATEMENT_TIMEOUT_MS).toBe(10_000);
     expect(cfg.ACADEMY_PROVISIONING).toBe(false);
-    expect(cfg.AUTH_STRICT).toBe(true);
     expect(cfg.REDIS_URL).toBeUndefined();
   });
 
   it('parses the string false as false and true as true', () => {
     expect(loadConfig({ ...validEnv(), ACADEMY_V2: 'false' }).ACADEMY_V2).toBe(false);
     expect(loadConfig({ ...validEnv(), ACADEMY_V2: 'true' }).ACADEMY_V2).toBe(true);
-    expect(loadConfig({ ...validEnv(), AUTH_STRICT: 'false' }).AUTH_STRICT).toBe(false);
+    expect(loadConfig({ ...validEnv(), STAGE1_AUTH_REQUIRED: 'true' }).STAGE1_AUTH_REQUIRED).toBe(
+      true,
+    );
+  });
+
+  // The five settings D18/D19 made meaningless (Mattermost, SES) and the four
+  // nothing ever read are gone. An environment that still has them on the
+  // server must start, not refuse: leftovers in a .env are not an error.
+  it('ignores the removed settings instead of refusing to start', () => {
+    const cfg = loadConfig({
+      ...validEnv(),
+      SES_REGION: 'eu-west-2',
+      SES_SENDER: 'academy@example.com',
+      MATTERMOST_URL: 'http://localhost:8065',
+      MATTERMOST_BOT_TOKEN: SECRET_TOKEN_VALUE,
+      MATTERMOST_IT_CHANNEL_ID: 'channel-synthetic',
+      PROVISIONING_RESPONDERS: 'someone',
+      SESSION_SECRET: 'x'.repeat(40),
+      AUTH_STRICT: 'true',
+      CRM_PUBLIC_URL: 'http://localhost:3000',
+    });
+    expect(cfg.ACADEMY_V2).toBe(false);
+    expect(cfg).not.toHaveProperty('SESSION_SECRET');
+    expect(cfg).not.toHaveProperty('MATTERMOST_URL');
+  });
+
+  it('defaults NODE_ENV to development when it is not set', () => {
+    const env = validEnv();
+    delete env.NODE_ENV;
+    // A live server that leaves NODE_ENV out runs in development mode: an
+    // insecure cookie and a mock CRM would be allowed. .env.example says so.
+    expect(loadConfig(env).NODE_ENV).toBe('development');
+    expect(loadConfig(env).COOKIE_SECURE).toBe(false);
   });
 
   it('rejects a boolean that is not exactly true or false', () => {
@@ -59,46 +91,63 @@ describe('loadConfig', () => {
   });
 
   it('treats a blank value as missing', () => {
-    const err = configError({ ...validEnv(), MATTERMOST_BOT_TOKEN: '  ' });
-    expect(err.missing).toEqual(['MATTERMOST_BOT_TOKEN']);
+    const err = configError({ ...validEnv(), CRM_AUTH_KEY: '  ' });
+    expect(err.missing).toEqual(['CRM_AUTH_KEY']);
   });
 
   it('names every missing variable at once', () => {
-    const err = configError(without('DB_PASSWORD', 'SES_SENDER', 'MATTERMOST_BOT_TOKEN'));
-    expect(err.missing).toEqual(['DB_PASSWORD', 'MATTERMOST_BOT_TOKEN', 'SES_SENDER']);
+    const err = configError(without('DB_PASSWORD', 'MEDIA_ROOT', 'PUBLIC_BASE_URL'));
+    expect(err.missing).toEqual(['DB_PASSWORD', 'MEDIA_ROOT', 'PUBLIC_BASE_URL']);
     for (const name of err.missing) expect(err.message).toContain(name);
   });
 
   it('never prints a secret value in the error message', () => {
     const env = {
       ...validEnv(),
-      MATTERMOST_URL: SECRET_TOKEN_VALUE,
-      SESSION_SECRET: 'short-secret',
+      CRM_AUTH_URL: SECRET_TOKEN_VALUE,
+      DB_PASSWORD: 'short-pw',
     };
     const err = configError(env);
-    expect(err.invalid).toEqual(['MATTERMOST_URL', 'SESSION_SECRET']);
+    expect(err.invalid).toEqual(['CRM_AUTH_URL', 'DB_PASSWORD']);
     expect(err.message).not.toContain(SECRET_TOKEN_VALUE);
-    expect(err.message).not.toContain('short-secret');
-    expect(err.message).not.toContain('db-password-synthetic');
+    expect(err.message).not.toContain('short-pw');
+    expect(err.message).not.toContain(CRM_KEY_VALUE);
   });
 
   it('requires REDIS_URL only in production', () => {
     expect(() => loadConfig({ ...validEnv(), NODE_ENV: 'development' })).not.toThrow();
-    const err = configError({ ...validEnv(), NODE_ENV: 'production' });
+    const err = configError({ ...validProdEnv(), REDIS_URL: '' });
     expect(err.missing).toEqual(['REDIS_URL']);
-    const cfg = loadConfig({
-      ...validEnv(),
-      NODE_ENV: 'production',
-      REDIS_URL: 'redis://localhost:6379',
-    });
-    expect(cfg.REDIS_URL).toBe('redis://localhost:6379');
+    expect(loadConfig(validProdEnv()).REDIS_URL).toBe('redis://localhost:6379');
   });
 
-  it('rejects a SESSION_SECRET shorter than 32 characters', () => {
-    const err = configError({ ...validEnv(), SESSION_SECRET: 'x'.repeat(31) });
-    expect(err.invalid).toEqual(['SESSION_SECRET']);
-    const cfg = loadConfig({ ...validEnv(), SESSION_SECRET: 'x'.repeat(32) });
-    expect(cfg.SESSION_SECRET).toHaveLength(32);
+  it('rejects a DB_PASSWORD shorter than 12 characters', () => {
+    const err = configError({ ...validEnv(), DB_PASSWORD: 'x'.repeat(11) });
+    expect(err.invalid).toEqual(['DB_PASSWORD']);
+    expect(err.message).toContain('at least 12 characters');
+    expect(loadConfig({ ...validEnv(), DB_PASSWORD: 'x'.repeat(12) }).DB_PASSWORD).toHaveLength(12);
+  });
+
+  it('requires https for CRM_AUTH_URL and PUBLIC_BASE_URL in production only', () => {
+    // http is fine on a laptop: Vite and the mock CRM both serve it.
+    expect(() => loadConfig(validEnv())).not.toThrow();
+
+    const both = configError({
+      ...validProdEnv(),
+      CRM_AUTH_URL: 'http://crm.example.invalid/api/auth/academy-verify',
+      PUBLIC_BASE_URL: 'http://academy.example.invalid',
+    });
+    expect(both.invalid).toEqual(['CRM_AUTH_URL', 'PUBLIC_BASE_URL']);
+
+    const one = configError({
+      ...validProdEnv(),
+      PUBLIC_BASE_URL: 'http://academy.example.invalid',
+    });
+    expect(one.invalid).toEqual(['PUBLIC_BASE_URL']);
+
+    const cfg = loadConfig(validProdEnv());
+    expect(cfg.PUBLIC_BASE_URL).toBe('https://academy.example.invalid');
+    expect(cfg.CRM_AUTH_URL.startsWith('https://')).toBe(true);
   });
 
   it('defaults CRM_AUTH_MODE to http and decodes the MFA key to 32 bytes', () => {
@@ -122,12 +171,7 @@ describe('loadConfig', () => {
   });
 
   it('refuses CRM_AUTH_MODE=mock in production', () => {
-    const err = configError({
-      ...validEnv(),
-      NODE_ENV: 'production',
-      REDIS_URL: 'redis://localhost:6379',
-      CRM_AUTH_MODE: 'mock',
-    });
+    const err = configError({ ...validProdEnv(), CRM_AUTH_MODE: 'mock' });
     expect(err.invalid).toEqual(['CRM_AUTH_MODE']);
     expect(err.message).toContain('refused in production');
   });
@@ -178,7 +222,7 @@ describe('loadConfig', () => {
 
   it('defaults COOKIE_SECURE to true in production and false elsewhere', () => {
     expect(loadConfig(validEnv()).COOKIE_SECURE).toBe(false);
-    const prod = { ...validEnv(), NODE_ENV: 'production', REDIS_URL: 'redis://localhost:6379' };
+    const prod = validProdEnv();
     expect(loadConfig(prod).COOKIE_SECURE).toBe(true);
     expect(loadConfig({ ...prod, COOKIE_SECURE: 'false' }).COOKIE_SECURE).toBe(false);
     expect(loadConfig({ ...validEnv(), COOKIE_SECURE: 'true' }).COOKIE_SECURE).toBe(true);

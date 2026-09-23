@@ -3,8 +3,14 @@
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ES2023", "DOM"],
-    "types": ["node"]
+    "types": ["node"],
+    // The leak checker is plain JavaScript (scripts/check-bundle-leaks.mjs) and
+    // the suite reuses its hashing and its sliding-window scan rather than
+    // writing a second copy. allowJs lets TypeScript follow the import; the
+    // file itself is not type-checked (checkJs stays off).
+    "allowJs": true,
+    "resolveJsonModule": true
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "playwright-report", "test-results"]
+  "exclude": ["node_modules", "playwright-report", "test-results", ".state"]
 }

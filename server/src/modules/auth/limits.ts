@@ -1,3 +1,4 @@
+import { createHash, createHmac } from 'node:crypto';
 import type { Redis } from 'ioredis';
 import { RateLimiterMemory, RateLimiterRedis } from 'rate-limiter-flexible';
 import type { RateLimiterAbstract } from 'rate-limiter-flexible';
@@ -40,8 +41,48 @@ function limiter(
   return new RateLimiterRedis({ ...opts, storeClient: redis, insuranceLimiter: memory });
 }
 
-export function emailKey(email: string): string {
+/**
+ * The key the two limiters count against: the address normalised, and NOTHING
+ * else — no hash, whatever the old name suggested. It only ever lives in Redis
+ * (or in memory) under a counter that expires, so an address typed by whoever
+ * is at the login box is held for fifteen minutes and then gone.
+ *
+ * It must never be written to academy.audit_events, which is append-only,
+ * manager-readable and exported as CSV. Use emailAuditKey() there.
+ */
+export function lockoutKey(email: string): string {
   return email.trim().toLowerCase();
+}
+
+const AUDIT_KEY_INFO = 'academy:audit-email:v1';
+
+// One derived key per secret, so the MFA key is never used directly for this.
+const derivedKeys = new WeakMap<Buffer, Buffer>();
+
+function auditKeyFrom(secret: Buffer): Buffer {
+  const cached = derivedKeys.get(secret);
+  if (cached !== undefined) return cached;
+  const derived = createHash('sha256').update(secret).update(AUDIT_KEY_INFO).digest();
+  derivedKeys.set(secret, derived);
+  return derived;
+}
+
+/**
+ * What a failed sign-in may record about the address that was typed: a keyed
+ * hash of it, and never the address.
+ *
+ * A failed attempt carries attacker-supplied input — any string at all can be
+ * put in that box — and the audit table keeps it forever. Hashing keeps the one
+ * property the audit needs, that two attempts on the same address match, while
+ * storing nothing a reader can turn back into a person. The key is derived from
+ * MFA_ENCRYPTION_KEY, so the digests cannot be brute-forced from the low-entropy
+ * space of "every email address at this firm" without the secret.
+ */
+export function emailAuditKey(email: string, secret: Buffer): string {
+  return createHmac('sha256', auditKeyFrom(secret))
+    .update(lockoutKey(email))
+    .digest('hex')
+    .slice(0, 32);
 }
 
 export function createLoginLimiters(
@@ -71,12 +112,12 @@ export function createLoginLimiters(
     },
 
     async isLocked(email) {
-      const res = await failures.get(emailKey(email));
+      const res = await failures.get(lockoutKey(email));
       return res !== null && res.consumedPoints >= settings.lockoutThreshold;
     },
 
     async recordFailure(email) {
-      const key = emailKey(email);
+      const key = lockoutKey(email);
       const res = await failures.penalty(key, 1);
       if (res.consumedPoints === settings.lockoutThreshold) {
         // Restart the clock so the lock lasts the full period from this failure.
@@ -87,7 +128,7 @@ export function createLoginLimiters(
     },
 
     async reset(email) {
-      await failures.delete(emailKey(email));
+      await failures.delete(lockoutKey(email));
     },
   };
 }

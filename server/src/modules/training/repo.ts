@@ -4,6 +4,7 @@ import type { StageLesson, StageRecording, TrackCode } from '@fac-academy/shared
 import type { CertificateIssuer } from '../../certs/issue.js';
 import type { RequireAuthDeps } from '../../middleware/auth.js';
 import type { Producers } from '../../queues/producers.js';
+import { sanitizeLessonHtml } from './sanitize.js';
 
 // Every SQL statement the training module runs lives here or in gate.ts, so
 // there is one place to read when checking what the server exposes. Nothing in
@@ -246,7 +247,11 @@ export async function loadStageCounts(
 // Stage contents
 // ---------------------------------------------------------------------------
 
-/** Lesson HTML comes from here and nowhere else: never from the bundle. */
+/**
+ * Lesson HTML comes from here and nowhere else: never from the bundle.
+ * This is also the one place it is sanitised (sanitize.ts), so the contract's
+ * "sanitised lesson HTML" is true of every row, however it reached the table.
+ */
 export async function loadLessons(
   db: Db,
   traineeId: number,
@@ -271,7 +276,7 @@ export async function loadLessons(
   return rows.map((r) => ({
     id: Number(r.id),
     title: r.title,
-    bodyHtml: r.body_html,
+    bodyHtml: sanitizeLessonHtml(r.body_html),
     position: r.position,
     read: r.read,
   }));

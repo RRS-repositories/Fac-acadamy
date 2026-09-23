@@ -1,4 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
+import DOMPurify from 'dompurify';
+import {
+  LESSON_ALLOWED_ATTR,
+  LESSON_ALLOWED_TAGS,
+  LESSON_ALLOWED_URI_REGEXP,
+  LESSON_FORBID_ATTR,
+  LESSON_URI_SAFE_ATTR,
+  applyLessonAttributeRules,
+  lessonBehaviourHooks,
+} from '@fac-academy/shared';
 import './lesson-body.css';
 
 /*
@@ -10,121 +20,70 @@ import './lesson-body.css';
  *
  * dangerouslySetInnerHTML never runs inline handlers, and we would not want it
  * to, so this module does two things:
- *   1. sanitizeLessonHtml() strips <script>, every on* attribute and every
- *      javascript: URL — while remembering, as data-* hooks, what the handler
- *      it removed was asking for.
+ *   1. sanitizeLessonHtml() runs the body through DOMPurify against the
+ *      allowlist in shared/src/lessonHtml.ts — while remembering, as data-*
+ *      hooks, what the handler it removed was asking for.
  *   2. wireLessonBehaviour() attaches ONE delegated click and ONE delegated
  *      input listener to the rendered body and reproduces those two behaviours
  *      exactly. Markup it does not recognise renders inert but readable.
  *
  * Nothing here scrolls: opening a tab and filtering rows are in-place updates.
+ *
+ * Why DOMPurify and not a hand-rolled pass: the hand-rolled one compared
+ * `element.tagName` against an upper-case blocklist, and inside <svg> or <math>
+ * an element's tagName is LOWER case, so `<svg><style>…</style></svg>` walked
+ * straight through with arbitrary CSS attached. It also tested the decoded
+ * attribute value for `javascript:`, which `jav&#x09;ascript:` is not — but the
+ * browser still resolves it as one. DOMPurify gets both right, is namespace
+ * aware, and is maintained against the mXSS bypasses nobody here will track.
  */
 
-// Elements that are dropped outright: none of them belong in a lesson body.
-const BLOCKED_TAGS = new Set([
-  'SCRIPT',
-  'STYLE',
-  'IFRAME',
-  'FRAME',
-  'FRAMESET',
-  'OBJECT',
-  'EMBED',
-  'APPLET',
-  'LINK',
-  'META',
-  'BASE',
-  'TEMPLATE',
-]);
+const purifier = typeof window === 'undefined' ? null : DOMPurify(window);
 
-// Attributes that can carry a URL, and therefore a javascript: payload.
-const URL_ATTRS = new Set([
-  'href',
-  'src',
-  'srcset',
-  'srcdoc',
-  'action',
-  'formaction',
-  'data',
-  'poster',
-  'background',
-  'xlink:href',
-  'ping',
-]);
-
-const DANGEROUS_URL = /^\s*(?:javascript|vbscript|file)\s*:/i;
-// data: URLs are blocked except for images, which are inert.
-const DATA_URL = /^\s*data\s*:/i;
-const SAFE_DATA_URL = /^\s*data:image\/(?:png|jpe?g|gif|webp|avif);/i;
-
-// `showDsar('good')` → tab group "dsar", panel id "dsarGood" (exactly what the
-// prototype's showDsar() toggles). Any other show*(…) handler works the same.
-const TAB_HANDLER = /^\s*show([A-Za-z0-9_$]+)\s*\(\s*['"]([^'"]*)['"]\s*\)\s*;?\s*$/;
-// `filterStatuses(this.value)` → a search box over the rows carrying data-k.
-const FILTER_HANDLER = /^\s*filter[A-Za-z0-9_$]*\s*\(/;
-
-function lowerFirst(text) {
-  return text.charAt(0).toLowerCase() + text.slice(1);
+// The two hooks below are registered once, on our own DOMPurify instance, so
+// nothing else on the page is affected by them.
+if (purifier !== null) {
+  // Before the allowlist deletes the on* attributes, record what they did.
+  purifier.addHook('beforeSanitizeAttributes', (node) => {
+    if (typeof node.getAttributeNames !== 'function') return;
+    for (const name of node.getAttributeNames()) {
+      if (!name.toLowerCase().startsWith('on')) continue;
+      const hooks = lessonBehaviourHooks(name, node.getAttribute(name) ?? '');
+      if (hooks === null) continue;
+      for (const [key, value] of Object.entries(hooks)) node.setAttribute(key, value);
+    }
+  });
+  // After it has run: drop a style="" that can fetch, and tame target="_blank".
+  purifier.addHook('afterSanitizeAttributes', (node) => {
+    if (typeof node.getAttribute === 'function') applyLessonAttributeRules(node);
+  });
 }
 
-function upperFirst(text) {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function isDangerousUrl(value) {
-  if (DANGEROUS_URL.test(value)) return true;
-  return DATA_URL.test(value) && !SAFE_DATA_URL.test(value);
-}
-
-/**
- * Record what an inline handler was about to do, as data-* attributes, before
- * the handler itself is removed. Unrecognised handlers leave no trace, so the
- * element simply does nothing once rendered.
- */
-function rememberBehaviour(element, attrName, value) {
-  if (attrName === 'onclick') {
-    const match = TAB_HANDLER.exec(value);
-    if (!match) return;
-    const group = lowerFirst(match[1]);
-    element.setAttribute('data-fa-tab-group', group);
-    element.setAttribute('data-fa-tab-panel', group + upperFirst(match[2]));
-    return;
-  }
-  if (attrName === 'oninput' || attrName === 'onkeyup' || attrName === 'onchange') {
-    if (FILTER_HANDLER.test(value)) element.setAttribute('data-fa-filter', 'rows');
-  }
-}
+// The allowlist deliberately holds no <svg> and no <math>: their children parse
+// in a foreign namespace, which is precisely the hole the old blocklist had.
+const PURIFY_CONFIG = {
+  ALLOWED_TAGS: LESSON_ALLOWED_TAGS,
+  ALLOWED_ATTR: LESSON_ALLOWED_ATTR,
+  ADD_URI_SAFE_ATTR: LESSON_URI_SAFE_ATTR,
+  FORBID_ATTR: LESSON_FORBID_ATTR,
+  ALLOWED_URI_REGEXP: LESSON_ALLOWED_URI_REGEXP,
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+  KEEP_CONTENT: true,
+  RETURN_TRUSTED_TYPE: false,
+};
 
 /**
  * Strip everything executable out of server-rendered lesson HTML.
- * Defence in depth: the API sanitises too, and the server is the source of
- * truth — this is the browser refusing to run anything either way.
+ * Defence in depth: the API sanitises the same way, with the same allowlist,
+ * before it ever serves the row (server/src/modules/training/sanitize.ts) —
+ * this is the browser refusing to run anything either way.
  */
 export function sanitizeLessonHtml(html) {
   if (typeof html !== 'string' || html.trim() === '') return '';
-  if (typeof DOMParser === 'undefined') return '';
-
-  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
-  const body = doc.body;
-  if (!body) return '';
-
-  for (const element of Array.from(body.querySelectorAll('*'))) {
-    if (BLOCKED_TAGS.has(element.tagName)) {
-      element.remove();
-      continue;
-    }
-    for (const attr of Array.from(element.attributes)) {
-      const name = attr.name.toLowerCase();
-      if (name.startsWith('on')) {
-        rememberBehaviour(element, name, attr.value);
-        element.removeAttribute(attr.name);
-        continue;
-      }
-      if (URL_ATTRS.has(name) && isDangerousUrl(attr.value)) {
-        element.removeAttribute(attr.name);
-      }
-    }
-  }
-  return body.innerHTML;
+  if (purifier === null) return '';
+  return purifier.sanitize(html, PURIFY_CONFIG);
 }
 
 /** Every tab button in the body, grouped by data-fa-tab-group. */
@@ -173,8 +132,8 @@ function filterRows(root, value) {
 }
 
 /**
- * Markup that lost its handlers (or never had them, because the API sanitised
- * them away) can still be recognised by its structure: a .doc-tabs bar whose
+ * Markup that lost its handlers without leaving a data-fa-* hook behind can
+ * still be recognised by its structure: a .doc-tabs bar whose
  * buttons line up with the panels that follow it, and a text box sitting above
  * rows that carry data-k.
  */

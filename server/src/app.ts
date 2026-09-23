@@ -167,7 +167,17 @@ export function createApp(deps: AppDeps): Express {
       res.status(status).json({ error: 'invalid_request' });
       return;
     }
-    console.error(`[academy-api] ${req.method} ${req.originalUrl} failed:`, err);
+    // Log the shape of the failure, never the object. A pg error carries
+    // `detail` ("Key (email)=(someone@example.com) already exists"), so
+    // logging the whole thing copies real row values — a person's address —
+    // out of the database and into the log file.
+    const e = err as { message?: unknown; code?: unknown; stack?: unknown } | null;
+    const code = typeof e?.code === 'string' ? e.code : 'none';
+    const message = typeof e?.message === 'string' ? e.message : String(err);
+    console.error(`[academy-api] ${req.method} ${req.originalUrl} failed: code=${code} ${message}`);
+    if (process.env.NODE_ENV !== 'production' && typeof e?.stack === 'string') {
+      console.error(e.stack);
+    }
     // Mid-stream failure: let Express close the connection.
     if (res.headersSent) {
       next(err);

@@ -19,6 +19,7 @@ import {
   parseOperator,
   parseReason,
 } from '../admin/lib.js';
+import { authoriseStage1, parseAuthoriseStage1Args } from '../admin/authorise-stage1.js';
 import { parseResetMfaArgs, resetMfa } from '../admin/reset-mfa.js';
 import { parseSetTrackArgs, parseTrackCode, setTrack } from '../admin/set-track.js';
 import {
@@ -121,6 +122,51 @@ describe('admin argument parsing', () => {
       expectDb: 'academy_test',
       dryRun: false,
     });
+  });
+
+  it('set-track: --clear and --track none both mean "take the track away"', () => {
+    const base = ['--email', 'a@example.com', '--by', 'Alex', '--expect-db', 'academy_test'];
+    expect(parseTrackCode('none')).toBeNull();
+    expect(parseTrackCode(' NONE ')).toBeNull();
+    expect(parseSetTrackArgs([...base, '--clear'])).toMatchObject({ track: null });
+    expect(parseSetTrackArgs([...base, '--track', 'none'])).toMatchObject({ track: null });
+    // Belt and braces, both spellings together.
+    expect(parseSetTrackArgs([...base, '--clear', '--track', 'NONE'])).toMatchObject({
+      track: null,
+    });
+    // ...but not two different instructions at once, and not an empty --track.
+    expect(() => parseSetTrackArgs([...base, '--clear', '--track', 'CS'])).toThrow(
+      /either --clear or --track/,
+    );
+    expect(() => parseSetTrackArgs([...base, '--track', '  '])).toThrow(AdminError);
+    expect(() => parseSetTrackArgs([...base, '--track', 'no track'])).toThrow(/not a track code/);
+  });
+
+  it('authorise-stage1: parses the full command line, --revoke and the optional reason', () => {
+    const base = ['--email', 'a@example.com', '--by', 'Alex', '--expect-db', 'academy_test'];
+    expect(parseAuthoriseStage1Args(base)).toEqual({
+      email: 'a@example.com',
+      operator: 'Alex',
+      reason: undefined,
+      expectDb: 'academy_test',
+      revoke: false,
+      dryRun: false,
+    });
+    expect(parseAuthoriseStage1Args([...base, '--revoke', '--dry-run'])).toMatchObject({
+      revoke: true,
+      dryRun: true,
+    });
+    expect(parseAuthoriseStage1Args([...base, '--reason', 'manager signed off'])).toMatchObject({
+      reason: 'manager signed off',
+    });
+    expect(parseAuthoriseStage1Args(['--help'])).toBe('help');
+    // The same guards as every other admin command.
+    expect(() => parseAuthoriseStage1Args(['--by', 'Alex', '--expect-db', 'x'])).toThrow(/--email/);
+    expect(() => parseAuthoriseStage1Args(['--email', 'a@example.com', '--by', 'Alex'])).toThrow(
+      /--expect-db/,
+    );
+    expect(() => parseAuthoriseStage1Args([...base, '--force'])).toThrow();
+    expect(() => parseAuthoriseStage1Args([...base, 'extra'])).toThrow();
   });
 
   it('set-role-override: parses id, role and required reason', () => {
@@ -275,6 +321,53 @@ describe.skipIf(!TEST_DB)('admin commands against the test database', () => {
     ]);
   });
 
+  it('set-track clears the track and audits TRACK_CLEARED, keeping the progress rows', async () => {
+    await setTrack(client, { email: EMAIL, track: 'CS', operator: 'Alex' });
+    // A stage this trainee has finished. It is keyed to the stage, not to the
+    // track, so taking the track away must not touch it.
+    const stage = await client.query<{ id: string }>(
+      'SELECT id::text AS id FROM academy.stages ORDER BY id LIMIT 1',
+    );
+    const stageId = stage.rows[0]?.id ?? null;
+    if (stageId !== null) {
+      await client.query(
+        `INSERT INTO academy.stage_completions (trainee_id, stage_id, best_score)
+         VALUES ($1, $2, 90) ON CONFLICT DO NOTHING`,
+        [traineeId, stageId],
+      );
+    }
+
+    const cleared = await setTrack(client, { email: EMAIL, track: null, operator: 'Alex' });
+    expect(cleared).toMatchObject({
+      traineeId,
+      from: 'CS',
+      to: null,
+      changed: true,
+      eventType: 'TRACK_CLEARED',
+    });
+    const t = await client.query<{ track: string | null }>(
+      'SELECT track FROM academy.trainees WHERE id = $1',
+      [traineeId],
+    );
+    expect(t.rows[0]?.track).toBeNull();
+    expect(await auditRows('TRACK_CLEARED')).toEqual([
+      { trainee_id: traineeId, actor: 'ops:Alex', payload: { from: 'CS' } },
+    ]);
+
+    if (stageId !== null) {
+      const kept = await client.query(
+        'SELECT 1 FROM academy.stage_completions WHERE trainee_id = $1 AND stage_id = $2',
+        [traineeId, stageId],
+      );
+      expect(kept.rowCount).toBe(1);
+    }
+
+    // Clearing a track that is not there changes nothing and writes no audit.
+    const again = await setTrack(client, { email: EMAIL, track: null, operator: 'Alex' });
+    expect(again).toMatchObject({ changed: false, to: null, eventType: null, auditId: null });
+    expect(await auditRows('TRACK_CLEARED')).toHaveLength(1);
+  });
+
   it('set-track refuses a code that is not in academy.tracks', async () => {
     await expect(
       setTrack(client, { email: EMAIL, track: 'NOPE', operator: 'Alex' }),
@@ -326,6 +419,80 @@ describe.skipIf(!TEST_DB)('admin commands against the test database', () => {
       { crm_user_id: CRM_ID, from: 'STAFF', to: null, reason: 'back to default' },
     ]);
     expect(audit.every((a) => a.trainee_id === traineeId)).toBe(true);
+  });
+
+  // The STAGE1_AUTH_REQUIRED gate. gate() reads
+  // progression_authorisations.authorised and treats a missing row as false, so
+  // the command has to create the row, flip it back, and be a no-op when it is
+  // already where it was asked to be.
+  it('authorise-stage1 creates the row, revokes it again, and audits each change', async () => {
+    const none = await client.query(
+      'SELECT 1 FROM academy.progression_authorisations WHERE trainee_id = $1',
+      [traineeId],
+    );
+    expect(none.rowCount).toBe(0);
+
+    const granted = await authoriseStage1(client, {
+      email: 'Trainee.Admin@Example.com', // CITEXT: case does not matter
+      operator: 'Alex Example',
+      reason: 'manager signed off',
+    });
+    expect(granted).toMatchObject({
+      traineeId,
+      email: EMAIL,
+      from: false,
+      to: true,
+      changed: true,
+    });
+
+    const row = await client.query<{ authorised: boolean; authorised_at: Date | null }>(
+      'SELECT authorised, authorised_at FROM academy.progression_authorisations WHERE trainee_id = $1',
+      [traineeId],
+    );
+    expect(row.rows[0]?.authorised).toBe(true);
+    expect(row.rows[0]?.authorised_at).toBeInstanceOf(Date);
+
+    // Asking twice changes nothing and writes no second audit row.
+    const again = await authoriseStage1(client, { email: EMAIL, operator: 'Alex' });
+    expect(again).toMatchObject({ from: true, to: true, changed: false, auditId: null });
+
+    const revoked = await authoriseStage1(client, {
+      email: EMAIL,
+      operator: 'Sam',
+      revoke: true,
+      reason: 'sent back to stage 1',
+    });
+    expect(revoked).toMatchObject({ from: true, to: false, changed: true });
+    const after = await client.query<{ authorised: boolean; authorised_at: Date | null }>(
+      'SELECT authorised, authorised_at FROM academy.progression_authorisations WHERE trainee_id = $1',
+      [traineeId],
+    );
+    expect(after.rows[0]?.authorised).toBe(false);
+    expect(after.rows[0]?.authorised_at).toBeNull();
+
+    // Revoking an authorisation that is not there is a no-op, not an error.
+    const noop = await authoriseStage1(client, { email: EMAIL, operator: 'Sam', revoke: true });
+    expect(noop).toMatchObject({ changed: false, auditId: null });
+
+    const audit = await auditRows('STAGE1_AUTHORISED');
+    expect(audit).toEqual([
+      {
+        trainee_id: traineeId,
+        actor: 'ops:Alex Example',
+        payload: { from: false, to: true, reason: 'manager signed off' },
+      },
+      {
+        trainee_id: traineeId,
+        actor: 'ops:Sam',
+        payload: { from: true, to: false, reason: 'sent back to stage 1' },
+      },
+    ]);
+  });
+
+  it('authorise-stage1 refuses an unknown email', async () => {
+    await expect(
+      authoriseStage1(client, { email: 'nobody.admin@example.com', operator: 'Alex' }),
+    ).rejects.toThrow(/No trainee with email/);
   });
 
   it('set-role-override works before the person has a trainee row', async () => {

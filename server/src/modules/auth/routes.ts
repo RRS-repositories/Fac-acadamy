@@ -21,7 +21,7 @@ import {
   setSessionCookie,
 } from './cookies.js';
 import type { LoginLimiters } from './limits.js';
-import { emailKey } from './limits.js';
+import { emailAuditKey, lockoutKey } from './limits.js';
 import { decryptSecret, encryptSecret } from './mfaCrypto.js';
 import { resolveRole } from './roles.js';
 import type { PendingMfaStore, SessionManager } from './sessions.js';
@@ -78,14 +78,16 @@ export function authRouter(deps: AuthDeps): Router {
       return;
     }
     const { email, password } = parsed.data;
-    const key = emailKey(email);
+    const key = lockoutKey(email);
 
     const loginFail = (reason: string, traineeId: number | null = null) =>
       writeAudit(db, {
         traineeId,
         eventType: 'LOGIN_FAIL',
         actor: traineeId === null ? actor.system : actor.trainee(traineeId),
-        payload: { email: key, reason, ip, userAgent },
+        // NEVER the address itself: anything at all can be typed into the
+        // login box, and academy.audit_events keeps it for good.
+        payload: { emailHash: emailAuditKey(key, deps.mfaKey), reason, ip, userAgent },
       });
 
     if (await deps.limiters.isLocked(key)) {
@@ -105,7 +107,7 @@ export function authRouter(deps: AuthDeps): Router {
               traineeId: null,
               eventType: 'LOCKOUT',
               actor: actor.system,
-              payload: { email: key, ip, userAgent },
+              payload: { emailHash: emailAuditKey(key, deps.mfaKey), ip, userAgent },
             });
           }
           fail(res, 401, 'invalid_credentials');
@@ -284,7 +286,7 @@ export function authRouter(deps: AuthDeps): Router {
           traineeId,
           eventType: 'LOCKOUT',
           actor: actor.system,
-          payload: { email: pending.email, ip, userAgent },
+          payload: { emailHash: emailAuditKey(pending.email, deps.mfaKey), ip, userAgent },
         });
         await deps.pending.destroy(pendingId);
         clearPendingCookie(res, deps.cookieSecure);

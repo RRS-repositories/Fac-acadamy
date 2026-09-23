@@ -16,11 +16,11 @@ const CONFIG_VARS = [
   'DB_STATEMENT_TIMEOUT_MS',
   'REDIS_URL',
   'ACADEMY_PROVISIONING',
-  'AUTH_STRICT',
   'CRM_AUTH_KEY',
-  'CRM_PUBLIC_URL',
+  'CRM_AUTH_MODE',
+  'COOKIE_SECURE',
+  'MEDIA_MAX_UPLOAD_MB',
   'SMTP_URL',
-  'PROVISIONING_RESPONDERS',
 ];
 
 function runApi(env: NodeJS.ProcessEnv): Promise<{ code: number | null; stderr: string }> {
@@ -44,13 +44,13 @@ describe('API boot', () => {
     const env: NodeJS.ProcessEnv = { ...process.env };
     for (const name of CONFIG_VARS) delete env[name];
     Object.assign(env, validEnv());
-    delete env.MATTERMOST_BOT_TOKEN;
+    delete env.MFA_ENCRYPTION_KEY;
     // Point at a file that does not exist so no local .env is loaded.
     env.ENV_FILE = fileURLToPath(new URL('./no-such-file.env', import.meta.url));
 
     const { code, stderr } = await runApi(env);
     expect(code).toBe(1);
     expect(stderr).toContain('Refusing to start');
-    expect(stderr).toContain('MATTERMOST_BOT_TOKEN');
+    expect(stderr).toContain('MFA_ENCRYPTION_KEY');
   });
 });

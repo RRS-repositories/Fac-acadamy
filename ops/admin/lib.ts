@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { loadDotenvIfPresent } from '../../server/src/config/dotenv.js';
 import { DbSettingsSchema, pgConfig } from '../../server/src/db/connection.js';
+import type { AuditEventType } from '../../server/src/modules/audit/audit.js';
 
 export class AdminError extends Error {
   override name = 'AdminError';
@@ -85,7 +86,10 @@ export async function writeAudit(
   db: Queryable,
   event: {
     traineeId: string | null;
-    eventType: string;
+    // Typed, not `string`: an event the server's AUDIT_EVENTS union does not
+    // know is an event anything filtering by that union drops on the floor —
+    // and these are the highest-privilege actions in the system.
+    eventType: AuditEventType;
     actor: string;
     payload: Record<string, unknown>;
   },

@@ -20,7 +20,7 @@ import { pgConfig } from '../../../src/db/connection.js';
 import type { DbSettings } from '../../../src/db/connection.js';
 import { applyMigrations, settingsFromEnv } from '../../../src/db/migrate.js';
 import type { MediaStore } from '../../../src/media/store.js';
-import { createLoginLimiters } from '../../../src/modules/auth/limits.js';
+import { createLoginLimiters, emailAuditKey } from '../../../src/modules/auth/limits.js';
 import type { LoginLimitSettings } from '../../../src/modules/auth/limits.js';
 import {
   MemoryPendingMfaStore,
@@ -129,6 +129,9 @@ export async function openTestDb(): Promise<Db> {
   const pool = new pg.Pool(pgConfig(settings, { applicationName: 'academy-auth-test', max: 5 }));
   const tag = randomBytes(4).toString('hex');
   const crmIds: number[] = [];
+  // Failed-login audit rows hold a keyed hash of the address, not the address,
+  // so cleanup cannot find them with a LIKE: it hashes these back instead.
+  const emailsUsed: string[] = [];
   let seq = 0;
 
   return {
@@ -139,9 +142,11 @@ export async function openTestDb(): Promise<Db> {
       seq++;
       const id = randomInt(700_000_000, 799_999_999);
       crmIds.push(id);
+      const email = `user${seq}.${tag}@example.com`;
+      emailsUsed.push(opts.email ?? email);
       return {
         id,
-        email: `user${seq}.${tag}@example.com`,
+        email,
         fullName: `Test User ${seq}`,
         role: 'Sales',
         isApproved: true,
@@ -196,8 +201,10 @@ export async function openTestDb(): Promise<Db> {
       const traineeIds = ids.rows.map((r) => r.id);
       await pool.query(
         `DELETE FROM academy.audit_events
-         WHERE trainee_id = ANY($1::bigint[]) OR payload->>'email' LIKE $2`,
-        [traineeIds, emails],
+          WHERE trainee_id = ANY($1::bigint[])
+             OR payload->>'email' LIKE $2
+             OR payload->>'emailHash' = ANY($3::text[])`,
+        [traineeIds, emails, emailsUsed.map((e) => emailAuditKey(e, TEST_MFA_KEY))],
       );
       await pool.query('DELETE FROM academy.sessions WHERE trainee_id = ANY($1::bigint[])', [
         traineeIds,
@@ -334,10 +341,14 @@ export async function auditRows(
   }>(
     `SELECT event_type, actor, payload FROM academy.audit_events
      WHERE ($1::bigint IS NULL OR trainee_id = $1)
-       AND ($2::text IS NULL OR payload->>'email' = $2)
+       AND ($2::text IS NULL OR payload->>'emailHash' = $2)
        AND ($3::text IS NULL OR event_type = $3)
      ORDER BY id`,
-    [where.traineeId ?? null, where.email?.toLowerCase() ?? null, where.eventType ?? null],
+    [
+      where.traineeId ?? null,
+      where.email === undefined ? null : emailAuditKey(where.email, TEST_MFA_KEY),
+      where.eventType ?? null,
+    ],
   );
   return rows;
 }

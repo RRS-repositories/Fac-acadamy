@@ -84,7 +84,7 @@ export function createCertificateJobHandler(deps: CertificateJobDeps): Certifica
     const recorded = await recordCertificateEmail(deps.db, issued.certificate.id, message);
     if (!recorded) return;
 
-    const delivery = await deliverCertificateEmail(message);
+    const delivery = await deliverCertificateEmail(issued.certificate.id, message);
     await markCertificateEmailSent(deps.db, issued.certificate.id, delivery);
   };
 }

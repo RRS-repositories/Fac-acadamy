@@ -131,6 +131,11 @@ export function managerRouter(deps: ManagerDeps): Router {
     res.status(200);
     res.type('text/csv; charset=utf-8');
     res.set('Content-Disposition', `attachment; filename="${csvFilename(now())}"`);
+    // The other download routes (certificates, media, verification) all say
+    // this; the export was the one that did not. Without it a browser is free
+    // to sniff the body as something else — a roster row is trainee-supplied
+    // text, and HTML is one of the things it could be taken for.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.send(body);
   });
 

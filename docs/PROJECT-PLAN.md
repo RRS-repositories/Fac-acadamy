@@ -187,7 +187,9 @@ Seed data: prototype questions go in as `source='HUMAN', approval_state='APPROVE
 | **production** | production server, schema `academy` | real staff | **off until sign-off** |
 
 **Environment variables** (the app refuses to start if a required one is missing):
-`DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSL, REDIS_URL, SESSION_SECRET, ACADEMY_V2, ACADEMY_PROVISIONING, STAGE1_AUTH_REQUIRED, AUTH_STRICT, CRM_AUTH_URL, CRM_AUTH_KEY, CRM_PUBLIC_URL, S3_BUCKET, S3_REGION, SES_REGION, SES_SENDER, MATTERMOST_URL, MATTERMOST_BOT_TOKEN, MATTERMOST_IT_CHANNEL_ID, PROVISIONING_RESPONDERS, PUBLIC_BASE_URL`. `PROTOTYPE_PATH` is used by the ops scripts only.
+`NODE_ENV, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSL, REDIS_URL, MFA_ENCRYPTION_KEY, ACADEMY_V2, ACADEMY_PROVISIONING, STAGE1_AUTH_REQUIRED, CRM_AUTH_MODE, CRM_AUTH_URL, CRM_AUTH_KEY, MEDIA_ROOT, MEDIA_MAX_UPLOAD_MB, ACADEMY_NOTIFY_MODE, PUBLIC_BASE_URL`. See `.env.example` for what each one is and which are optional.
+
+The S3, SES and Mattermost variables are **gone** (D15, D18, D19), as are `SESSION_SECRET`, `AUTH_STRICT`, `CRM_PUBLIC_URL` and `PROVISIONING_RESPONDERS`, which nothing ever read: a required setting that means nothing teaches people to put anything in it. `NODE_ENV` is the one to get right — left unset, a live server runs in development mode. `PROTOTYPE_PATH` and the four `BACKUP_*`/`PG_BIN` settings are used by the ops scripts only.
 
 ---
 
@@ -197,24 +199,24 @@ The browser code and the server code live in separate workspaces and never impor
 
 ```
 fac-academy/
-├── client/                      React 18 + Vite + Tailwind SPA, plain JSX. Built to client/dist, served by nginx at academy.fastactionclaims.com/
+├── client/                      React 18 + Vite + Tailwind SPA, plain JSX. Built to client/dist, served by nginx at /
 │   ├── index.html
 │   ├── vite.config.js           dev proxy: /api → http://localhost:4100 (same origin, as in production)
-│   ├── public/                  favicon + font files only. No lesson text, no media
 │   ├── src/
-│   │   ├── main.jsx · App.jsx · routes.jsx
+│   │   ├── main.jsx · App.jsx   App.jsx holds the routes (no separate routes.jsx)
 │   │   ├── api/                 fetch client + TanStack Query hooks (validates with shared/ zod contracts)
 │   │   ├── auth/                session context, <RequireAuth>, <RequireManager>
 │   │   ├── styles/              index.css: Tailwind + @theme tokens ported from the prototype :root
-│   │   ├── components/          Rail, StagePills, StageCard, LockedCard, NextUpCta, Toast,
-│   │   │                        ErrorBanner, NoSeekPlayer, AccomplishmentBanner
+│   │   ├── components/          AppShell, AuthStatusScreen, ErrorBanner, ScrollToTopOnNavigate,
+│   │   │                        auth/ · training/ (StageCard, LockedCard, NoSeekPlayer, LessonBody …) · manager/
 │   │   ├── pages/
 │   │   │   ├── auth/            Login, MfaEnrol, MfaChallenge
-│   │   │   ├── training/        Dashboard, Stage, Lesson, Recordings, Quiz, QuizResult
+│   │   │   ├── training/        Dashboard, Stage, Lesson, Quiz
 │   │   │   ├── reference/       StatusGuide
 │   │   │   ├── certs/           MyCertificates, VerifyCertificate (public page)
-│   │   │   └── manager/         Roster, Stuck, TraineeDetail, PreviewAsTrack, MediaUpload
-│   │   └── lib/                 scroll.js (navigation → top; in-place → never), listenBeacons.js
+│   │   │   ├── manager/         Roster, Stuck, TraineeDetail, PreviewAsTrack, MediaUpload
+│   │   │   └── NotFound.jsx · WaitingForTrack.jsx   (D13: no track assigned yet)
+│   │   └── lib/                 scroll.js (navigation → top; in-place → never), format.js
 │   └── test/                    Vitest + Testing Library
 │
 ├── server/                      Express API + BullMQ worker: two processes from one codebase
@@ -223,44 +225,54 @@ fac-academy/
 │   │   │   ├── api.ts           → pm2 app "academy-api"    (listens on 127.0.0.1:4100)
 │   │   │   └── worker.ts        → pm2 app "academy-worker" (consumes the queues)
 │   │   ├── app.ts               builds the Express app (no listen, so Supertest can use it)
-│   │   ├── config/env.ts        zod-validated; exits naming any missing variable
-│   │   ├── db/                  pool.ts (max ~10, statement_timeout, search_path=academy), tx.ts
-│   │   ├── middleware/          flag (503 when off), session, requireAuth, requireRole,
-│   │   │                        rateLimit, audit, errorHandler
+│   │   ├── config/              env.ts (zod-validated; exits naming any missing variable), dotenv.ts
+│   │   ├── db/                  pool.ts (max ~10, statement_timeout, search_path=academy),
+│   │   │                        connection.ts, migrate.ts (the runner)
+│   │   ├── middleware/          auth.ts (requireAuth / requireRole), flag.ts (503 when off)
 │   │   ├── modules/             one folder per feature: routes.ts → service.ts → repo.ts
 │   │   │   ├── health/
-│   │   │   ├── auth/            crmClient, totp, sessions (per-user index + revoke)
+│   │   │   ├── auth/            crmClient use, totp, sessions (per-user index + revoke), limits
 │   │   │   ├── training/        gate.ts ← the ONE gate · track, stages, lessons, quiz, grading, completions
-│   │   │   ├── media/           signedUrl, stream (Range proxy), coverage, upload
 │   │   │   ├── manager/         roster, accounts, export, previewAsTrack
-│   │   │   ├── provisioning/    requests, replyParser, approvals
-│   │   │   └── certs/           render, verify
-│   │   ├── integrations/        crm, s3, ses, mattermost (the only files that talk to the outside)
-│   │   ├── queues/              connection.ts, names.ts (prefix "academy", no colons), producers.ts
-│   │   └── jobs/                manager-notify, signin-events, provisioning, emails,
-│   │                            certificates, transcription*, question-gen*   (* stubs)
-│   ├── migrations/              0000_extensions · 0001_academy_schema (verbatim) · 0002_academy_v2_alignment …
-│   ├── templates/               email/*.html, certificate/*.html
+│   │   │   ├── notifications/   rules + recipients + the shadow-mode notifier (D19)
+│   │   │   └── audit/           the one place that writes audit_events
+│   │   ├── media/               routes.ts (Range streaming), store.ts, root.ts, coverage.ts, upload.ts
+│   │   ├── certs/               render.ts (Chromium → PDF), issue, verify, routes, email (shadow)
+│   │   ├── integrations/        crm/ (the only code that talks to the CRM), redis.ts
+│   │   ├── queues/              bull.ts, names.ts (prefix "academy", no colons), producers.ts,
+│   │   │                        runtime.ts, deadLetter.ts
+│   │   └── jobs/                handlers.ts, managerNotify, mediaJobs, certificateJobs
+│   ├── migrations/              0000_extensions … 0007_certificates (eight files; see its README)
+│   ├── templates/               certificate/ (HTML + two embedded woff2 fonts). Copied beside the
+│   │                            build by ops/deploy.sh — tsup emits only dist/api.js and dist/worker.js
 │   └── test/                    unit/ + api/ (Supertest, synthetic fixtures only)
 │
 ├── shared/                      imported by client AND server: contracts only
 │   └── src/
-│       ├── contracts/           zod schemas + TS types per endpoint (track, stage, quiz, manager …)
-│       └── constants.ts         track codes, roles, pass-mark rule (no answers, no content)
+│       ├── contracts/           zod schemas + TS types per endpoint (auth, training, manager,
+│       │                        media, certs, statusGuide, health)
+│       ├── constants.ts         track codes, roles, pass-mark rule (no answers, no content)
+│       └── lessonHtml.ts        the allow-list a lesson body is sanitised against
 │
 ├── ops/                         runs on a developer machine or the server, never in the browser
-│   ├── seed/seed-content.ts     reads $PROTOTYPE_PATH (outside the repo), jsdom sandbox, idempotent
-│   ├── media/extract-media.ts   embedded MP3s → S3 directly, never to disk in the repo
-│   ├── fixtures/                expected-track-visibility.json (stage ids only)
+│   ├── seed/                    seed-content.ts reads $PROTOTYPE_PATH (outside the repo), idempotent
+│   ├── media/                   ingest-media.ts / extract-media.ts → MEDIA_ROOT, never into the repo
+│   ├── admin/                   audited IT commands: reset-mfa, set-track, set-role-override,
+│   │                            authorise-stage1 (the STAGE1_AUTH_REQUIRED gate)
+│   ├── dev/                     developer-machine helpers (test accounts, e2e prep, screenshots)
+│   ├── backup/                  backup.ts + restore-drill.ts (database AND the media folder)
+│   ├── load/                    load-test.ts (50 concurrent trainees)
+│   ├── local/                   setup-local-db.mjs
 │   ├── nginx/academy.conf.template
-│   ├── pm2/ecosystem.config.js (ESM)
-│   └── deploy.sh                pull → install → build → pm2 reload (migrations are Brad's)
+│   ├── pm2/ecosystem.config.cjs (CommonJS: pm2 requires it — the one exception to ESM-only)
+│   └── deploy.sh                pull → install → build → templates → pm2 reload (migrations are Brad's)
 │
 ├── e2e/                         Playwright suite (S10)
-├── docs/                        this plan, HANDOFF, section reports, decisions log
+├── docs/                        this plan, HANDOFF, RUNBOOK-BACKUP
+├── scripts/                     check-forbidden-files.mjs, check-bundle-leaks.mjs (CI gates)
 ├── .github/workflows/ci.yml
 ├── .githooks/pre-push           blocks pushes to main
-├── docker-compose.yml           local Postgres 17, Redis 7, MinIO, Mailpit
+├── docker-compose.yml           local Postgres 17, Redis 7, Mailpit
 ├── .env.example                 placeholders only
 ├── .gitignore                   .env, node_modules, dist, *.mp3 *.mp4 *.wav *.m4a, the prototype HTML
 ├── tsconfig.base.json           strict; each workspace extends it
@@ -281,15 +293,18 @@ fac-academy/
 ### 7.1 How a request flows
 
 ```
-Browser ── https://academy.fastactionclaims.com ──► nginx (TLS, HSTS, CSP, gzip)
-                                                     ├─ /            → client/dist (index.html; long cache on hashed assets)
-                                                     ├─ /verify/:id  → client/dist (public certificate page)
-                                                     └─ /api/*       → 127.0.0.1:4100 academy-api
-                                                                         ├─ Postgres (schema academy)
-                                                                         ├─ Redis (sessions + BullMQ prefix academy)
-                                                                         ├─ S3 (streamed via /api/media/:id/stream)
-                                                                         └─ CRM API (academy-verify, create-user)
-academy-worker ── Redis queues ──► Mattermost · SES · S3 certificates
+Browser ── https://<academy host> ──► Cloudflare tunnel (TLS ends here)
+                                      ──► nginx (HSTS, CSP, gzip; ops/nginx/academy.conf.template)
+                                          ├─ /            → client/dist (SPA fallback; long cache on hashed assets)
+                                          ├─ /verify/:id  → client/dist (public certificate page — needs the SPA fallback)
+                                          └─ /api/*       → 127.0.0.1:4100 academy-api
+                                                              ├─ Postgres (schema academy)
+                                                              ├─ Redis (sessions + BullMQ prefix academy)
+                                                              ├─ MEDIA_ROOT on local disk, streamed by
+                                                              │  /api/media/:id/stream (D15: no S3)
+                                                              └─ CRM API (academy-verify)
+academy-worker ── Redis queues ──► manager alerts · certificate PDFs (Chromium) → MEDIA_ROOT
+                                   every message composed, audited and logged, never sent (D19)
 ```
 
 ### 7.2 What the subdomain decides
@@ -298,9 +313,9 @@ academy-worker ── Redis queues ──► Mattermost · SES · S3 certificate
 |---|---|
 | Origin | App and API on **one origin**, so there's no CORS configuration and no preflight requests |
 | Session cookie | `HttpOnly; Secure; SameSite=Lax`, **host-only** (no `Domain=` attribute), so it's never sent to `crm.fastactionclaims.com` and the CRM cookie is never sent to the academy |
-| DNS | One record `academy` → the production server (A record, or CNAME on EC2). The owner of the `fastactionclaims.com` zone adds it (Q2, Q9) |
-| TLS | A certificate for `academy.fastactionclaims.com` (Let's Encrypt via certbot, or the estate's existing method) |
-| Links in emails | Setup email → `https://crm.fastactionclaims.com/setup?token=…` (CRM); certificate email + verify → `https://academy.fastactionclaims.com/verify/<id>`. Both come from `PUBLIC_BASE_URL` / `CRM_PUBLIC_URL`, never hard-coded |
+| DNS | One record `academy` in the `fastactionclaims.com` zone, pointing at the tunnel. The owner of the zone adds it (Q2, Q9) |
+| TLS | Terminated by the **Cloudflare tunnel**, as the CRM's own hosts are. The nginx site therefore has no `ssl_certificate` and nothing for certbot to renew; a request that did not come through the tunnel is bounced to https, because the session cookie is secure-only in production |
+| Links in emails | Certificate email + verify → `<PUBLIC_BASE_URL>/verify/<id>`, never hard-coded, and `PUBLIC_BASE_URL` must be `https://` in production. There is no setup email: D18 dropped provisioning, so `CRM_PUBLIC_URL` is gone with it |
 | Test copy (Q5) | If approved: a separate private host name with the same layout, pointing at schema `academy_test` |
 | Local development | Vite on `localhost:5173` proxies `/api` to `localhost:4100`, so it behaves the same as production |
 
@@ -413,14 +428,31 @@ Estimated total **≈ 19–24 dev-days**, before review cycles.
 - [ ] Verify endpoint: real id valid, tampered id invalid, 30/min limit
 
 ### S10: E2E & go-live
+
+Rewritten 23 Sep to match what was actually built: there is no S3 (D15), no Mattermost
+(D18) and no provisioning flow, so the items about them are gone rather than left
+ticking along unread.
+
+**Before the flag goes on**
 - [ ] Full Playwright suite green in CI
-- [ ] Backup + one restore drill evidenced
+- [ ] Backup + one restore drill evidenced — **including the media folder** (`MEDIA_ROOT`): since D15 the database on its own restores an academy whose every recording, video and certificate is missing
 - [ ] 50 concurrent trainees: p95 < 500 ms, no errors
-- [ ] Security recheck: no passcodes, no preview toggle for staff, secrets in env, S3 private
+- [ ] Security recheck: no passcodes in the bundle, no preview toggle for staff, every secret in `.env` only, `NODE_ENV=production` set (or the session cookie is not secure), media not reachable except through the API
+- [ ] **Prove the app login cannot read a CRM table**: as `academy_app`, `SELECT` from a CRM table and get "permission denied". A grant block that silently skipped (see `server/migrations/README.md`) is the way this goes wrong
 - [ ] Car-finance lesson flagged for review on FCA updates
 - [ ] Brad's 5 content rulings applied or deferred in writing
-- [ ] DNS + TLS live
-- [ ] **Brad's written sign-off** → flag on → 9-track smoke test → Mattermost announcement
+
+**Server set-up** (each one is a template in `ops/`, substituted on the server)
+- [ ] Migrations 0000–0007 applied by Brad, in order, with the `academy_app` login already created
+- [ ] `.env` complete on the server; the app refuses to start if anything required is missing
+- [ ] Chromium installed for the certificate PDFs: `npx playwright install chromium` (plus its system libraries). Without it, certificates fail at the moment a trainee finishes a level
+- [ ] pm2: `academy-api` + `academy-worker` from the substituted `ops/pm2/ecosystem.config.cjs`, then **`pm2 save`** (nothing survives a reboot without it) and **`pm2 install pm2-logrotate`** (a full disk takes the CRM down too)
+- [ ] nginx: the substituted `ops/nginx/academy.conf.template` installed, `nginx -t` clean, reloaded. Check the SPA fallback by opening a `/verify/<id>` link cold — every certificate carries one
+- [ ] `ops/deploy.sh` run once end to end on the server, and re-run to prove it is repeatable
+- [ ] DNS + the Cloudflare tunnel route live, and https reaches the site
+
+**Go-live**
+- [ ] **Brad's written sign-off** → `ACADEMY_V2=true` → 9-track smoke test → tell the staff (there is no Mattermost announcement: D18)
 
 ### S11: media collection
 - [ ] Manifest worked one item at a time; every row INGESTED or DEFERRED

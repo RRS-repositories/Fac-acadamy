@@ -258,6 +258,10 @@ function managerRoutes(overrides = {}, { people = [AVERY, CASEY, DANA] } = {}) {
       disabled.delete(13);
       return [204];
     },
+    'PUT /api/manager/trainees/11/track': (init) => {
+      tracks.set(11, JSON.parse(init.body).track);
+      return [204];
+    },
     'PUT /api/manager/trainees/12/track': (init) => {
       tracks.set(12, JSON.parse(init.body).track);
       return [204];
@@ -499,7 +503,102 @@ describe('Manager roster', () => {
     expect(await within(row(11)).findByText("Couldn't reach the server.")).toBeInTheDocument();
   });
 
-  it('keeps Assign switched off while the select still says "No track yet"', async () => {
+  it('offers Remove once a trainee has a track, and says plainly what it does', async () => {
+    const fetchMock = mockFetch(managerRoutes());
+    renderApp('/manager');
+    await rosterLoaded();
+
+    const avery = within(row(11));
+    const select = avery.getByRole('combobox', { name: 'Track for Avery Stone' });
+    expect(select).toHaveValue('CS');
+    // Nothing to do until the manager changes the select.
+    expect(avery.getByRole('button', { name: 'Assign' })).toBeDisabled();
+
+    // "No track yet" is a real choice: picking it enables the button, and the
+    // button now says what it will do.
+    fireEvent.change(select, { target: { value: '' } });
+    const remove = avery.getByRole('button', { name: 'Remove' });
+    expect(remove).toBeEnabled();
+    expect(avery.queryByRole('button', { name: 'Assign' })).toBeNull();
+
+    // It asks first, in plain words, and sends nothing yet.
+    fireEvent.click(remove);
+    expect(
+      avery.getByText(
+        /Remove Avery Stone’s programme\? They’ll see “waiting for a manager” and keep everything they’ve already completed\./,
+      ),
+    ).toBeInTheDocument();
+    expect(callsTo(fetchMock, 'PUT', '/api/manager/trainees/11/track')).toHaveLength(0);
+  });
+
+  it('cancels a removal cleanly, putting the select back and sending nothing', async () => {
+    const fetchMock = mockFetch(managerRoutes());
+    renderApp('/manager');
+    await rosterLoaded();
+
+    const avery = within(row(11));
+    fireEvent.change(avery.getByRole('combobox', { name: 'Track for Avery Stone' }), {
+      target: { value: '' },
+    });
+    fireEvent.click(avery.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(avery.getByRole('button', { name: 'Cancel' }));
+
+    expect(callsTo(fetchMock, 'PUT', '/api/manager/trainees/11/track')).toHaveLength(0);
+    // Back to what the server holds, so a half-made change cannot look like a fact.
+    expect(avery.getByRole('combobox', { name: 'Track for Avery Stone' })).toHaveValue('CS');
+    expect(avery.getByRole('button', { name: 'Assign' })).toBeDisabled();
+    expect(avery.getByRole('cell', { name: 'Customer Service' })).toBeInTheDocument();
+  });
+
+  it('removes the track on confirm, sending { track: null }', async () => {
+    const fetchMock = mockFetch(managerRoutes());
+    renderApp('/manager');
+    await rosterLoaded();
+
+    const avery = within(row(11));
+    fireEvent.change(avery.getByRole('combobox', { name: 'Track for Avery Stone' }), {
+      target: { value: '' },
+    });
+    fireEvent.click(avery.getByRole('button', { name: 'Remove' }));
+    fireEvent.click(avery.getByRole('button', { name: 'Yes, remove' }));
+
+    await waitFor(() =>
+      expect(callsTo(fetchMock, 'PUT', '/api/manager/trainees/11/track')).toHaveLength(1),
+    );
+    const [[, init]] = callsTo(fetchMock, 'PUT', '/api/manager/trainees/11/track');
+    expect(JSON.parse(init.body)).toEqual({ track: null });
+    expect(init.credentials).toBe('same-origin');
+
+    // The row says so, and the waiting badge appears beside the name.
+    expect(await within(row(11)).findByRole('cell', { name: 'No track yet' })).toBeInTheDocument();
+    expect(within(row(11)).getByText('Waiting for a track')).toBeInTheDocument();
+  });
+
+  it('offers the same removal on the trainee page', async () => {
+    const fetchMock = mockFetch({
+      ...managerRoutes(),
+      'GET /api/manager/trainee/11': [200, DETAIL],
+    });
+    renderApp('/manager/trainee/11');
+    await screen.findByRole('heading', { name: 'Avery Stone' });
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Track for Avery Stone' }), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.getByTestId('remove-track-confirm')).toHaveTextContent(
+      'keep everything they’ve already completed',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, remove' }));
+
+    await waitFor(() =>
+      expect(callsTo(fetchMock, 'PUT', '/api/manager/trainees/11/track')).toHaveLength(1),
+    );
+    const [[, init]] = callsTo(fetchMock, 'PUT', '/api/manager/trainees/11/track');
+    expect(JSON.parse(init.body)).toEqual({ track: null });
+  });
+
+  it('keeps the button switched off for a trainee who has no track at all', async () => {
     const fetchMock = mockFetch(managerRoutes());
     renderApp('/manager');
     await rosterLoaded();
@@ -508,6 +607,8 @@ describe('Manager roster', () => {
     const assign = casey.getByRole('button', { name: 'Assign' });
     expect(casey.getByRole('combobox', { name: 'Track for Casey Nolan' })).toHaveValue('');
     expect(assign).toBeDisabled();
+    // Nothing to take away, so it never offers to.
+    expect(casey.queryByRole('button', { name: 'Remove' })).toBeNull();
 
     fireEvent.click(assign);
     expect(callsTo(fetchMock, 'PUT', '/api/manager/trainees/12/track')).toHaveLength(0);

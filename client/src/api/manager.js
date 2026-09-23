@@ -159,8 +159,15 @@ export async function setTraineeDisabled(id, disabled) {
   return null;
 }
 
+/**
+ * Set the trainee's track, or pass null to take it away again. The field is
+ * always sent: the server treats a missing track as a bad request, so a null
+ * has to be explicit and nobody can clear a programme by forgetting a field.
+ */
 export async function assignTrack(id, track) {
-  await managerRequest('PUT', `/api/manager/trainees/${encodeURIComponent(id)}/track`, { track });
+  await managerRequest('PUT', `/api/manager/trainees/${encodeURIComponent(id)}/track`, {
+    track: track === '' || track === undefined ? null : track,
+  });
   return null;
 }
 
@@ -288,9 +295,13 @@ export function useSetDisabled() {
 }
 
 /**
- * PUT the trainee's track (D13: first-time trainees start without one). The
- * server recomputes what that account can see; the client only shows the new
- * label.
+ * PUT the trainee's track (D13: first-time trainees start without one), or
+ * null to take it away. The server recomputes what that account can see; the
+ * client only shows the new label.
+ *
+ * Clearing shows the row as "waiting for a track" at once. The stage counts
+ * that go with it are the server's to work out, so they are left alone and the
+ * refetch in onSettled brings them back in line a moment later.
  */
 export function useAssignTrack() {
   const queryClient = useQueryClient();
@@ -299,7 +310,7 @@ export function useAssignTrack() {
     onMutate: async ({ id, track }) => {
       await queryClient.cancelQueries({ queryKey: managerKeys.all });
       const previous = snapshot(queryClient, id);
-      patchTrainee(queryClient, id, { track });
+      patchTrainee(queryClient, id, { track: track === '' || track === undefined ? null : track });
       return previous;
     },
     onError: (_error, { id }, previous) => restore(queryClient, id, previous),

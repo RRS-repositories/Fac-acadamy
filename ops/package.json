@@ -10,6 +10,7 @@
     "admin:reset-mfa": "tsx admin/reset-mfa.ts",
     "admin:set-track": "tsx admin/set-track.ts",
     "admin:set-role": "tsx admin/set-role-override.ts",
+    "admin:authorise-stage1": "tsx admin/authorise-stage1.ts",
     "test": "vitest run"
   },
   "dependencies": {

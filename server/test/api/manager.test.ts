@@ -93,12 +93,22 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
     return signIn(h, h.crm.add(db.newAccount({ role: 'Sales', ...opts })));
   }
 
-  /** Puts a trainee on a track the way a manager does: through the API. */
-  async function assignTrack(h: Harness, mgr: SignedIn, traineeId: number, track: string) {
-    const res = await request(h.app)
+  /** PUTs a track the way a manager does. `null` takes the track away. */
+  function putTrack(h: Harness, mgr: SignedIn, traineeId: number | string, body: unknown) {
+    return request(h.app)
       .put(`/api/manager/trainees/${traineeId}/track`)
       .set('Cookie', mgr.cookie)
-      .send({ track });
+      .send(body as object);
+  }
+
+  /** Puts a trainee on a track (or takes it away with null) through the API. */
+  async function assignTrack(
+    h: Harness,
+    mgr: SignedIn,
+    traineeId: number,
+    track: string | null,
+  ): Promise<void> {
+    const res = await putTrack(h, mgr, traineeId, { track });
     expect(res.status).toBe(204);
   }
 
@@ -501,6 +511,144 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
     });
   });
 
+  // ---- Checklist: a track can be taken away again (the manager gap) --------
+
+  describe('taking a track away', () => {
+    /** Every progress row this trainee owns, by table. Progress is per STAGE. */
+    async function progressCounts(traineeId: number) {
+      const counts: Record<string, number> = {};
+      for (const table of [
+        'lesson_progress',
+        'quiz_attempts',
+        'stage_completions',
+        'level_completions',
+      ]) {
+        const { rows } = await db.pool.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM academy.${table} WHERE trainee_id = $1`,
+          [traineeId],
+        );
+        counts[table] = Number(rows[0]!.n);
+      }
+      return counts;
+    }
+
+    it('null clears the column and is audited as TRACK_CLEARED, not an assignment', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+
+      await assignTrack(h, mgr, who.me.id, 'CS');
+      await assignTrack(h, mgr, who.me.id, null);
+
+      expect(rowFor(await roster(h, mgr), who.me.id)).toMatchObject({
+        track: null,
+        stagesTotal: 0,
+        stagesDone: 0,
+        currentStageCode: null,
+      });
+
+      const cleared = await auditRows(db.pool, {
+        traineeId: who.me.id,
+        eventType: 'TRACK_CLEARED',
+      });
+      expect(cleared).toHaveLength(1);
+      expect(cleared[0]).toMatchObject({ actor: `manager:${mgr.me.id}`, payload: { from: 'CS' } });
+      // An honest trail: the clear is NOT a TRACK_ASSIGNED with a null in it.
+      expect(cleared[0]!.payload).not.toHaveProperty('to');
+      const assigned = await auditRows(db.pool, {
+        traineeId: who.me.id,
+        eventType: 'TRACK_ASSIGNED',
+      });
+      expect(assigned.every((row) => row.payload.to !== null)).toBe(true);
+    });
+
+    it('the trainee falls back to the waiting screen, and their own view agrees', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+
+      await assignTrack(h, mgr, who.me.id, 'CS');
+      await assignTrack(h, mgr, who.me.id, null);
+
+      const own = await get(h, '/api/track', who.cookie);
+      expect(own.status).toBe(200);
+      expect(own.body).toMatchObject({ track: null, waitingForTrack: true, stages: [] });
+    });
+
+    it.skipIf(!seeded)('keeps every progress row across clear → re-assign', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+      const expected = expectedFor('CS');
+
+      await assignTrack(h, mgr, who.me.id, 'CS');
+      await passStage(h, who, expected[0]!);
+
+      const before = await progressCounts(who.me.id);
+      expect(before.lesson_progress).toBeGreaterThan(0);
+      expect(before.quiz_attempts).toBeGreaterThan(0);
+      expect(before.stage_completions).toBeGreaterThan(0);
+
+      await assignTrack(h, mgr, who.me.id, null);
+
+      // Nothing was deleted: the rows are keyed to the stage, not to the track.
+      expect(await progressCounts(who.me.id)).toEqual(before);
+      // They just cannot see any stages while they have no programme.
+      const whileWaiting = (await get(h, `/api/manager/trainee/${who.me.id}`, mgr.cookie))
+        .body as TraineeDetail;
+      expect(whileWaiting.stages).toEqual([]);
+      expect(whileWaiting.trainee.stagesDone).toBe(0);
+
+      await assignTrack(h, mgr, who.me.id, 'CS');
+
+      expect(await progressCounts(who.me.id)).toEqual(before);
+      const back = rowFor(await roster(h, mgr), who.me.id);
+      expect(back.stagesTotal).toBe(expected.length);
+      expect(back.stagesDone).toBe(1);
+      expect(back.attempts).toBe(1);
+      expect(back.bestAverage).toBe(100);
+      expect(back.currentStageCode).toBe(expected[1]);
+      expect(back.stages[0]).toMatchObject({ code: expected[0], passed: true, best: 100 });
+
+      // ...and the completed stage still reads "done" on the detail screen.
+      const detail = (await get(h, `/api/manager/trainee/${who.me.id}`, mgr.cookie))
+        .body as TraineeDetail;
+      expect(detail.stages.find((s) => s.code === expected[0])?.state).toBe('done');
+    });
+
+    it('a missing or nonsense track is 400, and an unknown trainee is still 404', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+
+      // A client that forgets the field must not clear a programme by accident.
+      for (const body of [{}, { track: 'NOPE' }, { track: '' }, { track: 7 }]) {
+        const res = await putTrack(h, mgr, who.me.id, body);
+        expect([JSON.stringify(body), res.status]).toEqual([JSON.stringify(body), 400]);
+        expect(res.body).toEqual({ error: 'invalid_request' });
+      }
+      expect(rowFor(await roster(h, mgr), who.me.id).track).toBeNull();
+
+      const missing = await putTrack(h, mgr, 999999999999, { track: null });
+      expect(missing.status).toBe(404);
+      expect(missing.body).toEqual({ error: 'not_found' });
+      expect((await putTrack(h, mgr, 'not-a-number', { track: null })).status).toBe(400);
+    });
+
+    it('a staff session cannot take anybody’s track away', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+      const other = await staff(h);
+      await assignTrack(h, mgr, other.me.id, 'CS');
+
+      const res = await putTrack(h, who, other.me.id, { track: null });
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'forbidden' });
+      expect(rowFor(await roster(h, mgr), other.me.id).track).toBe('CS');
+    });
+  });
+
   // ---- Checklist: the CSV export -----------------------------------------
 
   describe('the CSV export', () => {
@@ -559,6 +707,9 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
       expect(res.headers['content-disposition']).toMatch(
         /^attachment; filename="academy-roster-\d{4}-\d{2}-\d{2}\.csv"$/,
       );
+      // A download of trainee-supplied text: the browser must not be free to
+      // decide the body is something other than what we said it is.
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
 
       const text = stripBom(res.text);
       const rows = parseCsv(text);
@@ -594,6 +745,12 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
       const last = exported.at(-1)!;
       expect(last.actor).toBe(`manager:${mgr.me.id}`);
       expect(last.payload.rows).toBe(expectedRows.length);
+      // The audit row says WHICH filters were used, never what was typed into
+      // the search box: that is a colleague's name going into an append-only,
+      // manager-readable, CSV-exportable table. The scrubber has to reach it
+      // where it lives, one level down inside `filters`.
+      expect(last.payload.filters).toMatchObject({ q: '[redacted]' });
+      expect(JSON.stringify(last.payload)).not.toContain(db.tag);
     });
 
     it('stops a manager exporting in a loop', async () => {

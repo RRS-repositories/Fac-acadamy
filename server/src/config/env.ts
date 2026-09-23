@@ -12,20 +12,27 @@ import { parseMfaKey } from '../modules/auth/mfaCrypto.js';
 const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
 
 const ConfigSchema = DbSettingsSchema.extend({
+  // Not just a label: production is what turns the secure session cookie on
+  // (COOKIE_SECURE below), refuses the mock CRM, and requires Redis and https.
+  // It defaults to 'development' because that is the safe default for a laptop
+  // — which is exactly why a live server must set it explicitly.
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4100),
   HOST: z.string().min(1).default('127.0.0.1'),
   PUBLIC_BASE_URL: z.string().url(),
 
   // Database pool (the DB_* connection settings come from DbSettingsSchema).
+  // The password is tightened here rather than in DbSettingsSchema, which the
+  // ops scripts and the migration runner share: this is the long-lived login
+  // the app itself connects with, and it is generated, never typed, so a
+  // 'change-me' or an 'academy' must not be able to reach a running server.
+  DB_PASSWORD: z.string().min(12),
   DB_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   // Same statement timeout as the CRM's pool.
   DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).default(10_000),
 
   // Required in production; optional locally (health then reports redis:false).
   REDIS_URL: z.string().url().optional(),
-
-  SESSION_SECRET: z.string().min(32),
 
   // TOTP secrets are encrypted with this key (base64 of exactly 32 bytes).
   // Decoded once here; the value is never logged.
@@ -42,10 +49,12 @@ const ConfigSchema = DbSettingsSchema.extend({
   COOKIE_SECURE: bool.optional(),
 
   // Feature flags. ACADEMY_V2 and STAGE1_AUTH_REQUIRED must be set explicitly.
+  // STAGE1_AUTH_REQUIRED has no screen anywhere: the only supported way to
+  // authorise (or revoke) a trainee is ops/admin/authorise-stage1.ts, which is
+  // audited. Switching it on without that command locks everyone after stage 1.
   ACADEMY_V2: bool,
   STAGE1_AUTH_REQUIRED: bool,
   ACADEMY_PROVISIONING: bool.default('false'),
-  AUTH_STRICT: bool.default('true'),
 
   // CRM API. CRM_AUTH_MODE 'mock' swaps the CRM sign-in check for invented
   // local accounts; it is refused in production. The shared key is required
@@ -53,11 +62,9 @@ const ConfigSchema = DbSettingsSchema.extend({
   CRM_AUTH_URL: z.string().url(),
   CRM_AUTH_MODE: z.enum(['http', 'mock']).default('http'),
   CRM_AUTH_KEY: z.string().min(32).optional(),
-  CRM_PUBLIC_URL: z.string().url().optional(),
 
-  // Email.
-  SES_REGION: z.string().min(1),
-  SES_SENDER: z.string().email(),
+  // Email. No provider has been chosen (D19), so nothing here is read by any
+  // send path yet; SMTP_URL is the seam a local Mailpit plugs into.
   SMTP_URL: z.string().url().optional(),
 
   // Notifications (S08). No email provider has been chosen yet — Mattermost
@@ -84,12 +91,6 @@ const ConfigSchema = DbSettingsSchema.extend({
     .transform((value) => resolve(value)),
   // Ceiling for a manager upload (S06). Streaming is unaffected by it.
   MEDIA_MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(10_000).default(200),
-
-  // Mattermost.
-  MATTERMOST_URL: z.string().url(),
-  MATTERMOST_BOT_TOKEN: z.string().min(1),
-  MATTERMOST_IT_CHANNEL_ID: z.string().min(1),
-  PROVISIONING_RESPONDERS: z.string().min(1).optional(),
 })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV === 'production' && cfg.REDIS_URL === undefined) {
@@ -101,6 +102,23 @@ const ConfigSchema = DbSettingsSchema.extend({
     if (cfg.CRM_AUTH_MODE === 'http' && cfg.CRM_AUTH_KEY === undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['CRM_AUTH_KEY'], message: 'required' });
     }
+    // In production both of these must be https, and for different reasons.
+    //
+    // CRM_AUTH_URL carries the trainee's CRM password and the shared key to the
+    // CRM on every sign-in. Over http that is both of them in clear.
+    //
+    // PUBLIC_BASE_URL is the origin printed on every certificate and used in
+    // every /verify/<id> link. An http one sends people to a page where the
+    // secure-only session cookie is never sent, so they cannot stay signed in —
+    // and a certificate cannot be reissued with a corrected link once it has
+    // gone out.
+    if (cfg.NODE_ENV === 'production') {
+      for (const name of ['CRM_AUTH_URL', 'PUBLIC_BASE_URL'] as const) {
+        if (!cfg[name].startsWith('https://')) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: 'invalid' });
+        }
+      }
+    }
   })
   .transform((cfg) => ({
     ...cfg,
@@ -111,15 +129,16 @@ export type Config = z.infer<typeof ConfigSchema>;
 
 // Short, value-free hints for the checks that are not obvious from the name.
 const HINTS: Record<string, string> = {
-  SESSION_SECRET: 'at least 32 characters',
   CRM_AUTH_KEY: 'at least 32 characters',
   CRM_AUTH_MODE: "'http' or 'mock'; 'mock' is refused in production",
+  CRM_AUTH_URL: 'a URL; https:// in production',
+  PUBLIC_BASE_URL: 'a URL; https:// in production',
+  DB_PASSWORD: 'at least 12 characters',
   MFA_ENCRYPTION_KEY: 'base64 of exactly 32 bytes, e.g. openssl rand -base64 32',
   COOKIE_SECURE: "'true' or 'false'",
   ACADEMY_V2: "'true' or 'false'",
   STAGE1_AUTH_REQUIRED: "'true' or 'false'",
   ACADEMY_PROVISIONING: "'true' or 'false'",
-  AUTH_STRICT: "'true' or 'false'",
   DB_SSL: "'true' or 'false'",
   MEDIA_ROOT:
     'an absolute path to the media folder, outside the repo and outside the website folder',

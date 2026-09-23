@@ -173,6 +173,89 @@ describe('sanitizeLessonHtml', () => {
     expect(clean).toContain('class="callout key"');
     expect(clean).toContain('style="display:none"');
   });
+
+  // The hand-rolled sanitiser this replaced compared element.tagName against an
+  // UPPER-CASE blocklist. Inside <svg> and <math> an element's tagName is LOWER
+  // case, so 'style' never matched 'STYLE' and arbitrary CSS reached the page:
+  // enough to exfiltrate through a background url(), or to lay a full-page
+  // overlay over a quiz. Both of these survived the old code.
+  it('drops a <style> smuggled inside <svg>', () => {
+    const clean = sanitizeLessonHtml(
+      '<p>Kept text.</p><svg><style>*{background:url(https://evil.example/x)}</style></svg>',
+    );
+    expect(clean).toContain('Kept text.');
+    expect(clean.toLowerCase()).not.toContain('<style');
+    expect(clean.toLowerCase()).not.toContain('<svg');
+    expect(clean).not.toContain('evil.example');
+  });
+
+  it('drops a <style> smuggled inside <math>', () => {
+    const clean = sanitizeLessonHtml(
+      '<p>Kept text.</p><math><style>@import url(https://evil.example/x)</style></math>',
+    );
+    expect(clean).toContain('Kept text.');
+    expect(clean.toLowerCase()).not.toContain('<style');
+    expect(clean.toLowerCase()).not.toContain('<math');
+    expect(clean).not.toContain('@import');
+  });
+
+  // The old DANGEROUS_URL regex tested the DECODED attribute value, so a tab,
+  // newline, carriage return or \x01 inside the scheme defeated it — while
+  // Chrome and Firefox still resolve every one of these as javascript:.
+  it.each([
+    ['tab', 'jav&#x09;ascript:alert(1)'],
+    ['newline', 'jav&#x0A;ascript:alert(1)'],
+    ['carriage return', 'jav&#13;ascript:alert(1)'],
+    ['leading control character', '&#01;javascript:alert(1)'],
+  ])('drops an href with an entity-encoded javascript: URL (%s)', (_name, href) => {
+    const clean = sanitizeLessonHtml(`<a href="${href}">Link</a>`);
+    expect(clean).toContain('Link');
+    expect(clean).not.toContain('href=');
+    // eslint-disable-next-line no-control-regex
+    const stripped = clean.toLowerCase().replace(/[\s\u0000-\u001f]/g, '');
+    expect(stripped).not.toContain('javascript:');
+  });
+
+  it('drops a style="" that can fetch a URL, and keeps one that cannot', () => {
+    const clean = sanitizeLessonHtml(
+      '<div style="background:url(https://evil.example/x)">A</div>' +
+        '<div style="color:#b00020;padding:12px">B</div>',
+    );
+    expect(clean).not.toContain('evil.example');
+    expect(clean).toContain('style="color:#b00020;padding:12px"');
+  });
+
+  it('keeps the shape of a lesson body: tabs, tables and callouts', () => {
+    // Invented markup in the shape the ported lessons use — not their content.
+    const body =
+      '<div class="callout warn"><b>Heads up</b> An invented warning.</div>' +
+      '<div class="doc-tabs">' +
+      '<button class="on" onclick="showDemo(\'good\')">Replica A</button>' +
+      '<button onclick="showDemo(\'bad\')">Replica B</button>' +
+      '</div>' +
+      '<div id="demoGood"><p>Panel one.</p></div>' +
+      '<div id="demoBad" style="display:none"><p>Panel two.</p></div>' +
+      '<input type="text" placeholder="Type to search" oninput="filterDemo(this.value)">' +
+      '<table><tbody><tr><th scope="row">Row</th>' +
+      '<td class="sg-item" data-k="alpha: one">Alpha</td></tr></tbody></table>';
+    const clean = sanitizeLessonHtml(body);
+
+    expect(clean).toContain('class="callout warn"');
+    expect(clean).toContain('<table>');
+    expect(clean).toContain('scope="row"');
+    // The search key survives even though it contains a colon.
+    expect(clean).toContain('data-k="alpha: one"');
+    expect(clean).toContain('placeholder="Type to search"');
+    expect(clean).toContain('type="text"');
+    expect(clean).toContain('id="demoGood"');
+    // The inline handlers are gone, but what they did is recorded as hooks.
+    expect(clean).not.toContain('onclick');
+    expect(clean).not.toContain('oninput');
+    expect(clean).toContain('data-fa-tab-group="demo"');
+    expect(clean).toContain('data-fa-tab-panel="demoGood"');
+    expect(clean).toContain('data-fa-tab-panel="demoBad"');
+    expect(clean).toContain('data-fa-filter="rows"');
+  });
 });
 
 describe('interactive lesson markup (invented, not prototype content)', () => {

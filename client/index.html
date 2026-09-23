@@ -2,6 +2,20 @@
 <html lang="en-GB">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Content Security Policy — the backstop until nginx sends the real header.
+      Scripts from this origin only, so anything injected into a lesson body
+      cannot run; styles and fonts from us and Google Fonts ('unsafe-inline' is
+      for the style="" attributes React writes); data:/blob: for our own images
+      and media; connect-src 'self' so nothing can be posted to another host.
+      nginx must send this same policy as a header and add frame-ancestors
+      'none' (plus X-Frame-Options: DENY) — a meta tag cannot carry that one.
+      See docs/ and ops/nginx for the deployment side.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; worker-src 'self' blob:; manifest-src 'self'"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FAC Academy</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

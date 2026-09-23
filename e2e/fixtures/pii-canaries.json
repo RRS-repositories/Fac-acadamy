@@ -1,0 +1,32 @@
+[
+  {
+    "label": "staff-email-1",
+    "length": 24,
+    "sha256": "f0f44d6546f709d5a17ae20018bf781f705902c8845736bf5f38df548746d3fc"
+  },
+  {
+    "label": "staff-email-2",
+    "length": 22,
+    "sha256": "361e6b9fd95fc0acdac218b11ab11929bb3a7db6178f30ecbcb63c97349d8f75"
+  },
+  {
+    "label": "staff-email-3",
+    "length": 26,
+    "sha256": "13f45d646aab00548ecc3122dae65fac273e93780d09905a659d63519afd0f2b"
+  },
+  {
+    "label": "staff-name-1",
+    "length": 8,
+    "sha256": "aefce4d153d542ad907cf5b8144f9f2d98dff6c325b003b49ff83838ce253b70"
+  },
+  {
+    "label": "staff-name-2",
+    "length": 6,
+    "sha256": "52e8e47b38e854580afce4aade15dbd5ce0c0464da711afe71da123687d5a4cd"
+  },
+  {
+    "label": "staff-name-3",
+    "length": 10,
+    "sha256": "628fc4ee662799a6f74dc7c1fff650e5f521505fc27ba5bfcb4f887a0cfe2379"
+  }
+]
