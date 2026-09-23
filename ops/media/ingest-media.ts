@@ -57,6 +57,9 @@ export interface IngestArgs {
   recordingCode: string | null;
   expectDb: string;
   dryRun: boolean;
+  /** Overwrite a slot that already has media (a re-record, or a seeded key
+   *  whose file was never loaded). Off unless asked for. */
+  replace: boolean;
 }
 
 // academy.stages.code (0002) and academy.call_recordings.code (the seed's
@@ -83,6 +86,7 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
         'recording-code': { type: 'string' },
         'expect-db': { type: 'string' },
         'dry-run': { type: 'boolean', default: false },
+        replace: { type: 'boolean', default: false },
       },
       allowPositionals: false,
     }));
@@ -90,7 +94,7 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
     throw new MediaError(
       `${(err as Error).message}\nUsage: ingest-media.ts --file <path outside the repo> ` +
         '--stage <stageCode> --title "..." [--description "..."] [--recording-code <code>] ' +
-        '--expect-db <name> [--dry-run]',
+        '--expect-db <name> [--dry-run] [--replace]',
     );
   }
 
@@ -124,6 +128,7 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
     recordingCode: recordingCode === '' ? null : recordingCode,
     expectDb: parseExpectDb(str('expect-db')),
     dryRun: values['dry-run'] === true,
+    replace: values['replace'] === true,
   };
 }
 
@@ -183,6 +188,7 @@ async function findEmptySlot(
   db: Queryable,
   stageId: string,
   recordingCode: string | null,
+  replace = false,
 ): Promise<SlotRow | null> {
   if (recordingCode !== null) {
     const { rows } = await db.query<
@@ -194,9 +200,10 @@ async function findEmptySlot(
     );
     const slot = rows[0];
     if (slot === undefined) return null; // a new row will be created with this code
-    if (slot.media_key !== null) {
+    if (slot.media_key !== null && !replace) {
       throw new MediaError(
-        `Recording "${recordingCode}" already has media. Clear it first, or ingest under a new code.`,
+        `Recording "${recordingCode}" already has media. Pass --replace to overwrite it, or ` +
+          'ingest under a new code.',
       );
     }
     if (slot.stage_id !== null && slot.stage_id !== stageId) {
@@ -243,7 +250,7 @@ export interface IngestInput {
 export async function writeRecording(db: Queryable, input: IngestInput): Promise<IngestResult> {
   const { args } = input;
   const stage = await findStage(db, args.stageCode);
-  const slot = await findEmptySlot(db, stage.id, args.recordingCode);
+  const slot = await findEmptySlot(db, stage.id, args.recordingCode, args.replace);
 
   const common = {
     stageCode: args.stageCode,

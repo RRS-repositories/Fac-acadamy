@@ -120,7 +120,13 @@ describe('ingest-media arguments', () => {
       recordingCode: 's4-rec1',
       expectDb: 'academy_dev',
       dryRun: false,
+      replace: false,
     });
+  });
+
+  it('only overwrites an existing slot when --replace is given', () => {
+    expect(parseIngestArgs(base).replace).toBe(false);
+    expect(parseIngestArgs([...base, '--replace']).replace).toBe(true);
   });
 
   it('requires --file, --stage, --title and --expect-db', () => {
