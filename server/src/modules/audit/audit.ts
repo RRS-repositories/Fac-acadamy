@@ -15,6 +15,12 @@ export const AUDIT_EVENTS = [
   'ACCOUNT_DISABLED',
   'ACCOUNT_ENABLED',
   'TRACK_ASSIGNED',
+  // S04 training events.
+  'LESSON_READ',
+  'QUIZ_SUBMIT',
+  'STAGE_PASS',
+  'LEVEL_PASS',
+  'DEPT_PASS',
 ] as const;
 export type AuditEventType = (typeof AUDIT_EVENTS)[number];
 

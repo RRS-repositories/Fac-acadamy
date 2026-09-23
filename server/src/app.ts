@@ -6,6 +6,8 @@ import { authRouter } from './modules/auth/routes.js';
 import type { AuthDeps } from './modules/auth/routes.js';
 import { healthRouter } from './modules/health/routes.js';
 import { managerRouter } from './modules/manager/accounts.js';
+import type { TrainingDeps } from './modules/training/repo.js';
+import { trainingRouter } from './modules/training/routes.js';
 
 export interface AppDeps {
   /** ACADEMY_V2. When false, every API route except /api/health is 503. */
@@ -20,6 +22,11 @@ export interface AppDeps {
    * by tests that exercise health and the flag gate alone.
    */
   auth?: AuthDeps;
+  /**
+   * Training routes (S04): the track list, stage content, lesson reads and
+   * quizzes. Omitted only by tests that exercise health and the flag gate.
+   */
+  training?: TrainingDeps;
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -40,6 +47,10 @@ export function createApp(deps: AppDeps): Express {
   if (deps.auth !== undefined) {
     app.use('/api', authRouter(deps.auth));
     app.use('/api/manager', managerRouter(deps.auth));
+  }
+
+  if (deps.training !== undefined) {
+    app.use('/api', trainingRouter(deps.training));
   }
 
   // Further feature routers are mounted here in later sections.

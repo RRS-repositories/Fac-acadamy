@@ -15,6 +15,7 @@ import {
   RedisSessionStore,
   createSessionManager,
 } from '../modules/auth/sessions.js';
+import { createJobQueue, createProducers } from '../queues/index.js';
 
 loadDotenvIfPresent();
 
@@ -60,19 +61,31 @@ if (redis === null) {
 const sessionStore = redis ? new RedisSessionStore(redis) : new MemorySessionStore();
 const pendingStore = redis ? new RedisPendingMfaStore(redis) : new MemoryPendingMfaStore();
 
+const sessions = createSessionManager({ db: pool, store: sessionStore });
+
 const app = createApp({
   flagEnabled: config.ACADEMY_V2,
   checkDb: () => checkDb(pool),
   checkRedis: () => checkRedis(redis),
   auth: {
     db: pool,
-    sessions: createSessionManager({ db: pool, store: sessionStore }),
+    sessions,
     pending: pendingStore,
     crm,
     limiters: createLoginLimiters(redis),
     mfaKey: config.MFA_ENCRYPTION_KEY,
     cookieSecure: config.COOKIE_SECURE,
     now: Date.now,
+  },
+  training: {
+    db: pool,
+    sessions,
+    cookieSecure: config.COOKIE_SECURE,
+    stage1AuthRequired: config.STAGE1_AUTH_REQUIRED,
+    // Level and department completions enqueue the manager-notify job. With
+    // no REDIS_URL this is the in-memory queue, so local development runs
+    // without Redis and nothing pretends a DM was sent.
+    producers: createProducers(createJobQueue({ redisUrl: config.REDIS_URL })),
   },
 });
 

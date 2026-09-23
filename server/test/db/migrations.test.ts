@@ -26,7 +26,10 @@ function envWithDotenv(): NodeJS.ProcessEnv {
 }
 
 const env = envWithDotenv();
-const TEST_DB = env.MIGRATION_TEST_DB_NAME?.trim() || '';
+// Its own throw-away database when MIGRATIONS_TEST_DB_NAME is set: this suite
+// drops and rebuilds the academy schema, which would wipe the content the S02
+// and S04 suites rely on if it shared academy_test.
+const TEST_DB = env.MIGRATIONS_TEST_DB_NAME?.trim() || env.MIGRATION_TEST_DB_NAME?.trim() || '';
 
 const NEW_TABLES_0002 = [
   'certificates',

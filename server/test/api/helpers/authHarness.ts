@@ -98,7 +98,12 @@ export interface Db {
   settings: DbSettings;
   tag: string;
   newAccount(opts?: Partial<FakeAccount>): FakeAccount;
-  harness(opts?: { limits?: Partial<LoginLimitSettings>; flagEnabled?: boolean }): Harness;
+  harness(opts?: {
+    limits?: Partial<LoginLimitSettings>;
+    flagEnabled?: boolean;
+    /** S04 gate flag: a manager must authorise progress past stage 1. */
+    stage1AuthRequired?: boolean;
+  }): Harness;
   cleanup(): Promise<void>;
 }
 
@@ -155,6 +160,13 @@ export async function openTestDb(): Promise<Db> {
           cookieSecure: false,
           now: clock.now,
         },
+        training: {
+          db: pool,
+          sessions: createSessionManager({ db: pool, store: sessions, now: clock.now }),
+          cookieSecure: false,
+          stage1AuthRequired: opts.stage1AuthRequired ?? false,
+          now: clock.now,
+        },
       });
       return { app, crm, clock, sessions };
     },
@@ -173,6 +185,27 @@ export async function openTestDb(): Promise<Db> {
       await pool.query('DELETE FROM academy.sessions WHERE trainee_id = ANY($1::bigint[])', [
         traineeIds,
       ]);
+      // S04 progress rows, children first: a trainee row cannot go while
+      // anything still references it.
+      await pool.query(
+        `DELETE FROM academy.attempt_answers
+          WHERE attempt_id IN (SELECT id FROM academy.quiz_attempts
+                                WHERE trainee_id = ANY($1::bigint[]))`,
+        [traineeIds],
+      );
+      for (const table of [
+        'quiz_attempts',
+        'lesson_progress',
+        'listen_progress',
+        'stage_completions',
+        'level_completions',
+        'dept_completions',
+        'progression_authorisations',
+      ]) {
+        await pool.query(`DELETE FROM academy.${table} WHERE trainee_id = ANY($1::bigint[])`, [
+          traineeIds,
+        ]);
+      }
       await pool.query('DELETE FROM academy.trainee_mfa WHERE trainee_id = ANY($1::bigint[])', [
         traineeIds,
       ]);

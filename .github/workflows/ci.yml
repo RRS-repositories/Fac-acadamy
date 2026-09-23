@@ -54,6 +54,8 @@ jobs:
       SESSION_SECRET: ci-only-dummy-session-secret-not-used-anywhere-else
       # Lets server/test/db/migrations.test.ts wipe and re-migrate this throw-away DB.
       MIGRATION_TEST_DB_NAME: academy_ci
+      # The migration suite drops the academy schema, so it gets its own database.
+      MIGRATIONS_TEST_DB_NAME: academy_migrations_ci
 
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +76,9 @@ jobs:
 
       # Applies server/migrations to the throw-away Postgres above. The
       # --expect-db guard refuses to write to any other database.
+      - name: Create the migration-test database
+        run: PGPASSWORD=academy_ci_only psql -h localhost -U academy -d academy_ci -c 'CREATE DATABASE academy_migrations_ci' -c 'SELECT 1'
+
       - name: Migrations
         run: npm run migrate -w @fac-academy/server -- --commit --expect-db academy_ci
 

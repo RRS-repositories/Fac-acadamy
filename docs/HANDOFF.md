@@ -11,7 +11,7 @@
 | Uncommitted files | none |
 | Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
 | Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **S04 (API & gating).** S03 verified locally 22 Sep: 171 server tests incl. every CHECKLIST 03 item (disable refused in ~17 ms); live sign-in through the proxy with the mock CRM (`CRM_AUTH_MODE=mock`, invented @example.com accounts, password `dev-password`). IT admin commands in `ops/admin/`. Open: Redis-backed stores untested locally (no Memurai; CI has Redis); CRM PR #1 must be merged + `ACADEMY_VERIFY_KEY`/`CRM_AUTH_KEY` set before real CRM sign-in |
+| Next step | **S05 (Front-end)** — the React port of the prototype: dashboard, stage view, lesson reader, quiz and result screens, Status Guide, DSAR tabs, scroll rules, accessibility, screenshot pairs for Brad. S04 verified locally 23 Sep: 333 tests; 9-track sweep zero diff; 387 locked requests refused; live walk-through (lesson gate, failed attempt hides answers, pass reveals them and unlocks the next stage) |
 
 ## Phase 0 gate results (22 Sep, run locally)
 
@@ -39,6 +39,12 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 - `PROTOTYPE_PATH=<path outside repo> npx tsx ops/seed/seed-content.ts --expect-db academy_dev` (add `--dry-run` to roll back). Verify: `npx tsx ops/seed/verify-seed.ts --expect-db academy_dev`.
 - Migration 0003 adds the DEPARTMENT recording category, department metadata, `stages.sort` and the question upsert key.
 - Leak canaries in `ops/fixtures/leak-canaries.json` are hashes only.
+
+## Local test databases
+
+- `academy_dev` (development), `academy_test` (DB-backed tests, holds the seeded content), `academy_migrations_test` (migration suite only — it drops the academy schema, so it must stay separate).
+- Run the tests with `MIGRATION_TEST_DB_NAME=academy_test`, `MIGRATIONS_TEST_DB_NAME=academy_migrations_test` and a real `PROTOTYPE_PATH` (all three are in the local `.env`).
+- Per-track dev accounts: `npx tsx ops/dev/seed-test-accounts.ts --expect-db academy_dev` (9 tracks + a manager, invented @example.com). Evidence sweep: `npx tsx ops/dev/track-sweep.ts --expect-db academy_dev`.
 
 ## Documents
 
