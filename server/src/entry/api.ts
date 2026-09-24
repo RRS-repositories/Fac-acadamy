@@ -20,7 +20,14 @@ import {
 } from '../modules/auth/sessions.js';
 import { createJobQueue, createProducers, verifyJobQueue } from '../queues/index.js';
 
-loadDotenvIfPresent();
+try {
+  loadDotenvIfPresent();
+} catch (err) {
+  // An ENV_FILE that is not there. Say so plainly: the alternative is a list
+  // of missing variables that never mentions the file nobody read.
+  console.error(`[academy-api] Refusing to start: ${(err as Error).message}`);
+  process.exit(1);
+}
 
 let config: Config;
 try {
@@ -52,6 +59,43 @@ const mediaStore = createLocalMediaStore(config.MEDIA_ROOT);
 // academy/certs/, streamed by the API and never served by nginx.
 
 const pool = createPool(config);
+
+// One probe at start-up. An unreachable database is NOT fatal — one that is
+// briefly away during a restart must not stop the API coming back, and
+// /api/health already reports it — but without this line the only symptom is
+// a 503 from health: pm2 says "online", the log says "listening", and nothing
+// anywhere mentions the database. Credentials are never printed.
+if (await checkDb(pool)) {
+  console.log(
+    `[academy-api] database: ${config.DB_NAME} on ${config.DB_HOST}:${String(config.DB_PORT)}` +
+      ' (schema academy)',
+  );
+} else {
+  console.error(
+    `[academy-api] WARNING: the database (${config.DB_NAME} on ${config.DB_HOST}:${String(config.DB_PORT)})` +
+      ' did not answer. Check DB_HOST, DB_PORT, DB_NAME, DB_USER and DB_PASSWORD.' +
+      ' /api/health will report 503 and every route will fail until it does.',
+  );
+}
+
+// COOKIE_SECURE decides whether the session cookie carries `Secure`, and
+// getting it wrong is silent in both directions: nothing errors, people just
+// cannot stay signed in (or the cookie travels in clear). Say so at start-up.
+if (config.NODE_ENV === 'production' && !config.COOKIE_SECURE) {
+  console.warn(
+    '[academy-api] WARNING: COOKIE_SECURE=false in production. The session cookie is not marked' +
+      ' Secure, so it travels in clear over http and can be stolen. Remove COOKIE_SECURE from the' +
+      ' environment to get the production default (true).',
+  );
+}
+if (config.NODE_ENV !== 'production' && config.COOKIE_SECURE) {
+  console.warn(
+    '[academy-api] WARNING: COOKIE_SECURE=true outside production. A browser only keeps a Secure' +
+      ' cookie from an https page (or from localhost), so signing in over http:// on any other' +
+      ' host will fail at the code step with mfa_required and nothing will say why.',
+  );
+}
+
 const redis = createRedis(config.REDIS_URL);
 // Open the connection now so sessions and rate limits work from the first request.
 redis?.connect().catch(() => {

@@ -35,7 +35,12 @@ import { createWorkerRuntime } from '../queues/runtime.js';
 
 const log = consoleLogger('academy-worker');
 
-loadDotenvIfPresent();
+try {
+  loadDotenvIfPresent();
+} catch (err) {
+  console.error(`[academy-worker] Refusing to start: ${(err as Error).message}`);
+  process.exit(1);
+}
 
 let config: Config;
 try {

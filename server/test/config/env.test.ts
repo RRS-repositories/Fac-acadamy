@@ -229,3 +229,77 @@ describe('loadConfig', () => {
     expect(configError({ ...validEnv(), COOKIE_SECURE: 'yes' }).invalid).toEqual(['COOKIE_SECURE']);
   });
 });
+
+// Everything NODE_ENV=production changes, in one place. The app had only ever
+// been started in development mode, so these rules were written and never
+// exercised end to end; each one is pinned here so that cannot happen again.
+describe('loadConfig: the production-only rules', () => {
+  it('accepts a fully configured production environment', () => {
+    const cfg = loadConfig(validProdEnv());
+    expect(cfg.NODE_ENV).toBe('production');
+    expect(cfg.COOKIE_SECURE).toBe(true);
+    expect(cfg.CRM_AUTH_MODE).toBe('http');
+    expect(cfg.REDIS_URL).toBe('redis://localhost:6379');
+  });
+
+  // The base object is parsed before the cross-field rules run, so a missing
+  // variable has to be named in production exactly as it is anywhere else.
+  it.each(REQUIRED_VARS)('names %s when it is missing in production', (name) => {
+    const env = validProdEnv();
+    delete env[name];
+    const err = configError(env);
+    expect(err.missing).toEqual([name]);
+    expect(err.message).toContain(name);
+  });
+
+  it('names REDIS_URL, and only in production', () => {
+    const env = validProdEnv();
+    delete env.REDIS_URL;
+    expect(configError(env).missing).toEqual(['REDIS_URL']);
+    // Same environment, development: Redis is optional and health reports it.
+    expect(() => loadConfig({ ...env, NODE_ENV: 'development' })).not.toThrow();
+  });
+
+  it('names CRM_AUTH_MODE and says mock is refused, so the message is actionable', () => {
+    const err = configError({ ...validProdEnv(), CRM_AUTH_MODE: 'mock' });
+    expect(err.invalid).toEqual(['CRM_AUTH_MODE']);
+    expect(err.message).toContain("'mock' is refused in production");
+  });
+
+  it('requires CRM_AUTH_KEY in production, because mock mode is not available', () => {
+    const env = validProdEnv();
+    delete env.CRM_AUTH_KEY;
+    expect(configError(env).missing).toEqual(['CRM_AUTH_KEY']);
+    // Asking for mock to dodge the key does not work either: both are named.
+    const both = configError({ ...env, CRM_AUTH_MODE: 'mock' });
+    expect(both.variables).toContain('CRM_AUTH_MODE');
+  });
+
+  it('names each http:// URL separately', () => {
+    expect(
+      configError({ ...validProdEnv(), CRM_AUTH_URL: 'http://crm.example.invalid/verify' }).invalid,
+    ).toEqual(['CRM_AUTH_URL']);
+    expect(
+      configError({ ...validProdEnv(), PUBLIC_BASE_URL: 'http://academy.example.invalid' }).invalid,
+    ).toEqual(['PUBLIC_BASE_URL']);
+  });
+
+  // Documented, not endorsed: production accepts COOKIE_SECURE=false, which
+  // leaves the session cookie readable by anyone on the wire. Nothing in the
+  // config stops it, so entry/api.ts warns about it at start-up instead.
+  it('still allows COOKIE_SECURE=false to be forced in production', () => {
+    expect(loadConfig({ ...validProdEnv(), COOKIE_SECURE: 'false' }).COOKIE_SECURE).toBe(false);
+  });
+
+  // The cross-field rules only run once the individual fields parse, so a
+  // first run reports the plain missing ones and a second run reports these.
+  // Worth knowing on deployment day: fixing the first list is not the end.
+  it('reports the plain missing variables before the production-only ones', () => {
+    const env = validProdEnv();
+    delete env.DB_HOST;
+    delete env.REDIS_URL;
+    const err = configError(env);
+    expect(err.missing).toEqual(['DB_HOST']);
+    expect(err.variables).not.toContain('REDIS_URL');
+  });
+});
