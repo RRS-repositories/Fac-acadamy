@@ -1,0 +1,22 @@
+[
+  {
+    "label": "answer-1",
+    "length": 77,
+    "sha256": "94e2476e0389be50bd5a21092c80540c7dfb36dea6cb4fcfccb5c5f324c73fda"
+  },
+  {
+    "label": "answer-2",
+    "length": 144,
+    "sha256": "9743f02083a9604ce88778fedccc5573c5fe4dbd7316535e0ac3e3c64c7f5327"
+  },
+  {
+    "label": "lesson-sentence-1",
+    "length": 107,
+    "sha256": "8cbf17c5f66deb4da73df380444615ee464fceb1ce8fa25fe71d9bc82c1a8e96"
+  },
+  {
+    "label": "status-line-1",
+    "length": 80,
+    "sha256": "92fab355e99932b3c7d695555f5daa2aae939ba4e8e046fa66b13079bd602354"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // shared/ also runs in the browser, so no Node globals leak in here.
+    "types": []
+  },
+  "include": ["src", "test"]
+}

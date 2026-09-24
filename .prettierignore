@@ -1,0 +1,10 @@
+# Hand-formatted docs and generated files
+*.md
+package-lock.json
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+# Run state the E2E global setup writes (gitignored, regenerated every run)
+e2e/.state/

@@ -1,0 +1,246 @@
+# FAC Academy — nginx site TEMPLATE (S10).
+#
+# This file is a TEMPLATE. It is not valid nginx configuration until every
+# __PLACEHOLDER__ below has been replaced. Real host names, file paths and
+# ports belong on the server, never in this repo.
+#
+# ---------------------------------------------------------------------------
+# WHAT TO SUBSTITUTE
+# ---------------------------------------------------------------------------
+#   __ACADEMY_HOST__   The host name the academy answers on (working
+#                      assumption D9: the `academy` subdomain of the company
+#                      domain, beside the CRM's own host). Used twice: once as
+#                      server_name, once in the "came in through the tunnel"
+#                      redirect below.
+#   __CLIENT_DIST__    Absolute path of the built browser app — the `client/dist`
+#                      folder inside the checkout that ops/deploy.sh builds.
+#                      nginx's worker user must be able to read it.
+#   __API_PORT__       The port academy-api listens on: the app's PORT setting
+#                      (default 4100). The API binds 127.0.0.1 (HOST), so nginx
+#                      and the API must agree on this number.
+#
+# For example (run it, check the result, then install it):
+#
+#   sed -e 's|__ACADEMY_HOST__|academy.example.invalid|g' \
+#       -e 's|__CLIENT_DIST__|/path/to/checkout/client/dist|g' \
+#       -e 's|__API_PORT__|4100|g' \
+#       ops/nginx/academy.conf.template > /tmp/academy.conf
+#   # install it as a site, then:
+#   nginx -t && systemctl reload nginx
+#
+# Check these against the app's .env before reloading:
+#   * client_max_body_size (below) must be >= MEDIA_MAX_UPLOAD_MB, or a manager's
+#     upload dies at nginx with a 413 and never reaches the API's own check;
+#   * PUBLIC_BASE_URL must be https://__ACADEMY_HOST__ — it is what every
+#     certificate's /verify/<id> link is built from;
+#   * COOKIE_SECURE is true in production, so the session cookie only survives
+#     over HTTPS. See the tunnel redirect below.
+#
+# ---------------------------------------------------------------------------
+# TLS AND THE TUNNEL
+# ---------------------------------------------------------------------------
+# This site listens on plain HTTP, exactly like the CRM's own site: TLS is
+# terminated in front of nginx by the Cloudflare tunnel, which then talks to
+# nginx locally. There is therefore no ssl_certificate here and nothing for
+# certbot to renew. If the academy is ever published some other way, add the
+# TLS listener here and keep everything else as it is.
+#
+# Two consequences, both handled below:
+#   1. Anything reaching this site WITHOUT a CF-Ray header did not come through
+#      the tunnel (a direct hit on the box or its LAN address). Such a request
+#      is plain http, so the secure-only session cookie is never sent and the
+#      person would see a sign-in page that refuses to stay signed in. It is
+#      bounced to the https host instead. This is the CRM's pattern, for the
+#      same reason in different clothes (there: the softphone microphone).
+#   2. X-Forwarded-Proto is passed through as https so the API knows the
+#      browser's origin was secure. The API trusts these headers from loopback
+#      only (`app.set('trust proxy', 'loopback')`).
+#
+# ---------------------------------------------------------------------------
+# ONE NGINX RULE THAT BITES
+# ---------------------------------------------------------------------------
+# add_header is inherited by a nested block ONLY if that block has no add_header
+# of its own. The security headers are therefore declared once at server level
+# and NO location adds a header of its own — cache lifetimes use `expires`,
+# which is a different directive and does not break the inheritance. If you ever
+# add an add_header inside a location, repeat the whole security block there too.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __ACADEMY_HOST__;
+
+    root __CLIENT_DIST__;
+    index index.html;
+
+    # The manager's media upload (POST /api/manager/recordings). Keep this at or
+    # above MEDIA_MAX_UPLOAD_MB (default 200 MB) so the API, not nginx, is what
+    # enforces the ceiling and explains it.
+    #
+    # NOTE: a Cloudflare tunnel caps a request body at about 100 MB, and that cap
+    # is not ours to raise. Anything bigger — the FOS walkthrough video, a long
+    # call recording — never reaches nginx at all. Put those in from the server
+    # itself with the ingest script (ops/media/ingest-media.ts), which writes
+    # straight into MEDIA_ROOT and registers the row; the browser upload is for
+    # everyday, small files.
+    client_max_body_size 200m;
+
+    # --- Security headers -------------------------------------------------
+    # These are deliberately NOT set by the API: one place sets them, for the
+    # browser app and the JSON API alike. `always` so they are present on error
+    # responses too (a 413 or a 502 is still a page a browser renders).
+
+    # TLS ends at the tunnel, but the browser's connection is https, so HSTS is
+    # honoured. One year, subdomains included. Do not add `preload` without
+    # deciding it for the whole domain.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # No MIME sniffing: a lesson body or an uploaded file must never be
+    # re-interpreted as script.
+    add_header X-Content-Type-Options "nosniff" always;
+
+    # Referrers stay inside the origin; a certificate's /verify/<id> link must
+    # not leak in a Referer header to wherever it was pasted.
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Clickjacking: frame-ancestors 'none' in the CSP below is the modern rule,
+    # X-Frame-Options is here for the browsers that still only read that.
+    add_header X-Frame-Options "DENY" always;
+
+    # Content-Security-Policy, matching what this app actually loads:
+    #   script-src 'self'          Vite emits real .js files; no inline script,
+    #                              no eval, no CDN.
+    #   style-src  + 'unsafe-inline'
+    #                              Tailwind ships as a file, but a stray inline
+    #                              <style> from a library would otherwise take
+    #                              the whole page down. Styles cannot exfiltrate
+    #                              data the way script can.
+    #   fonts.googleapis.com / fonts.gstatic.com
+    #                              client/index.html loads Inter and Outfit from
+    #                              Google Fonts. Self-host the two woff2 files
+    #                              (the certificate template already embeds them)
+    #                              and BOTH entries can be deleted.
+    #   media-src 'self'           Audio and video come from /api/media/:id/stream
+    #                              on this origin only — there are no signed URLs
+    #                              and no third-party player.
+    #   connect-src 'self'         The API is same-origin; there is no CORS.
+    #   img-src data:              Inline SVG/QR data URIs.
+    #   frame-ancestors 'none'     Nobody frames the academy.
+    #   form-action 'self'         A stolen page cannot post the login form away.
+    add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; media-src 'self'; connect-src 'self'" always;
+
+    # --- Compression ------------------------------------------------------
+    # Text only. Media is already compressed: gzipping an mp3 or an mp4 burns
+    # CPU for nothing and breaks nothing gently — and gzip would also have to
+    # buffer, which is exactly what the streaming location below refuses to do.
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_types
+        text/plain
+        text/css
+        text/javascript
+        application/javascript
+        application/json
+        application/manifest+json
+        image/svg+xml;
+    # No audio/*, no video/*, no application/pdf, no font/* — all pre-compressed.
+
+    # --- Health -----------------------------------------------------------
+    # Never redirected: monitors and the tunnel itself call it over plain http
+    # from the box, with no CF-Ray header. It must answer, not bounce.
+    location = /api/health {
+        proxy_pass http://127.0.0.1:__API_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        access_log off;
+    }
+
+    # --- Media streaming --------------------------------------------------
+    # GET /api/media/:recordingId/stream is the only route to a recording or the
+    # FOS video, and the API streams every byte itself after checking the
+    # session and the stage lock (D15). Two things matter here:
+    #
+    #   proxy_buffering off  — nginx must not spool a 19-minute video into a
+    #                          temp file before the first byte reaches the
+    #                          browser. With buffering on, a long file plays
+    #                          late, seeks badly, and fills /var/cache.
+    #   long timeouts        — a paused player holds the connection open. The
+    #                          default 60s read timeout would cut it.
+    #
+    # Range requests need nothing special: the API answers 206 itself and nginx
+    # passes Range and Content-Range through untouched.
+    location /api/media/ {
+        proxy_pass http://127.0.0.1:__API_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+
+        # Same tunnel rule as everything else below.
+        if ($http_cf_ray = "") { return 302 https://__ACADEMY_HOST__$request_uri; }
+    }
+
+    # --- The API ----------------------------------------------------------
+    location /api/ {
+        proxy_pass http://127.0.0.1:__API_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+
+        # An upload is streamed to the API rather than spooled to disk here, so
+        # a 200 MB file does not land twice on the server.
+        proxy_request_buffering off;
+
+        # Generous, because an upload and a PDF render are both slower than a
+        # page load: certificates are rendered by Chromium on the server.
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+
+        if ($http_cf_ray = "") { return 302 https://__ACADEMY_HOST__$request_uri; }
+    }
+
+    # --- Static assets ----------------------------------------------------
+    # Vite fingerprints every file under /assets/, so a year is safe: a new
+    # build produces new names. `expires` (not add_header) on purpose — see the
+    # note at the top of this file.
+    location /assets/ {
+        expires 1y;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # --- The browser app, with the SPA fallback ---------------------------
+    # try_files ... /index.html is what makes a deep link work. It is not a
+    # nicety: EVERY certificate carries a printed and emailed link to
+    #   https://__ACADEMY_HOST__/verify/<public id>
+    # and that page is client-side routed. Without this line a certificate's own
+    # verify link 404s for anyone who opens it fresh, and there is no way to fix
+    # a certificate once it has been issued and emailed. The same goes for
+    # /stage/..., /manager/... and every other bookmarked page.
+    #
+    # index.html itself must never be cached, or a browser keeps asking for the
+    # asset names from the previous deploy. `expires -1` sets no-cache without
+    # an add_header (see the note at the top).
+    location / {
+        expires -1;
+        try_files $uri $uri/ /index.html;
+
+        if ($http_cf_ray = "") { return 302 https://__ACADEMY_HOST__$request_uri; }
+    }
+}

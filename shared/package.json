@@ -1,0 +1,20 @@
+{
+  "name": "@fac-academy/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Contracts shared by the academy client and server. No content, answers or secrets.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

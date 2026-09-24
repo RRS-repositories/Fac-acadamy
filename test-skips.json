@@ -1,0 +1,34 @@
+{
+  "entries": {
+    "ops/test/dev-accounts.test.ts": {
+      "max": 2,
+      "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed, so the throw-away CI database has no stages or questions to make progress against",
+      "unproven": "that `seed-test-accounts --reset` really wipes the progress of the invented test accounts and leaves every other trainee's progress alone, and that the track sweep finds exactly one available stage for each of the nine test accounts"
+    },
+    "server/test/api/certs.test.ts": {
+      "max": 14,
+      "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: a certificate is only issued when a trainee finishes a level or a department academy, and there are no stages to finish here",
+      "unproven": "the whole certificate feature: that finishing a level issues exactly one certificate with a stored PDF, that issuing twice re-uses the same PDF instead of making a second one, that a department academy earns its own certificate worded from the database, who may download a certificate (its owner and a manager yes, another trainee and a signed-out visitor no, unknown id 404), that public verification answers truthfully for a real, a tampered and a revoked id and is rate-limited to 30 checks a minute per address, and that the certificate email job records the send"
+    },
+    "server/test/api/manager.test.ts": {
+      "max": 6,
+      "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: these six cases put real quiz passes and real stage lists behind the manager's screens. The rest of the manager suite runs here",
+      "unproven": "that a trainee's quiz pass shows up on the manager's roster within one refresh, that the roster carries the right per-stage progress chips for everyone on the page, that the stuck list flags three fails on one stage and seven days of silence while leaving healthy trainees off it, that moving someone from Customer Service to Admin changes exactly which stages they can see, that clearing and re-assigning a track keeps every progress row, and that 'preview as track' returns a track's stage list without leaking any lesson or answer content"
+    },
+    "server/test/api/quiz.test.ts": {
+      "max": 15,
+      "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: every question, option and correct answer is read back out of the seeded database on purpose, so that none of it is ever copied into this repo",
+      "unproven": "the entire quiz API, including the two rules that matter most: the pass/fail boundary (all correct scores 100% and passes; one mark below the stage's pass mark fails) and the answer-reveal rule (the correct answers come back only on a pass, never on a fail, and the 'correct' flag is absent from the raw quiz JSON). Also unproven: the questions are served in the prototype's order, the quiz is refused until every lesson of the stage is read, a locked stage is refused with 403 and a stage on another track with 404, a trainee with no track is refused, retakes are unlimited with the best score kept, an option belonging to another question and a malformed body are both rejected, grading happens on the server under the same gates as the read route, a pass unlocks exactly the next stage and nothing for anyone else, finishing the core completes Level 1 and queues the manager notification, and two submissions at once record two attempts but only one completion row"
+    },
+    "server/test/api/status-guide.test.ts": {
+      "max": 4,
+      "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: the status guide's 34 rows come from the prototype, so the table is empty here",
+      "unproven": "that GET /api/status-guide serves all 34 rows in sort order and row for row as the database holds them, that it refuses anyone without a session, and that it answers 503 while the ACADEMY_V2 flag is off"
+    },
+    "server/test/api/training-read.test.ts": {
+      "max": 21,
+      "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: this suite checks the stage lists and the lock rules against real stages, of which there are none here",
+      "unproven": "the read side of the training portal and, with it, the lock rules a trainee sees: that each of the nine tracks lists exactly the stages the §1 fixture says it should, in unlock order; that a trainee with no track is told they are waiting for one; that every training route refuses a visitor with no session and answers 503 while ACADEMY_V2 is off; that stage 1 opens and every later stage is refused with a reason until it is earned, on all nine tracks; that a stage on another track and an unknown stage code both 404 the same way, leaking nothing; that completing a stage unlocks exactly the next one; that STAGE1_AUTH_REQUIRED changes nothing else; that a lesson is marked read once, idempotently, and audited once; that a lesson read inside a locked stage is refused; that the quiz stays blocked until every lesson is read; and that a 'coming soon' recording slot is never counted as media"
+    }
+  }
+}

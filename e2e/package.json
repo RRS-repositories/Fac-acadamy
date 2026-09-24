@@ -1,0 +1,19 @@
+{
+  "name": "@fac-academy/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright end-to-end suite (S10). Runs against the local app. Synthetic accounts only.",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
+    "e2e:prepare": "tsx ../ops/dev/e2e-prepare.ts --expect-db academy_dev",
+    "e2e:clean": "tsx ../ops/dev/e2e-prepare.ts --expect-db academy_dev --clean",
+    "canaries:pii": "tsx tools/make-pii-canaries.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}

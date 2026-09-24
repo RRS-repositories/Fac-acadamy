@@ -1,0 +1,26 @@
+{
+  "name": "@fac-academy/ops",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Operator scripts (content seed, media extraction, deploy templates). Never shipped to the browser.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "seed": "tsx seed/seed-content.ts",
+    "admin:reset-mfa": "tsx admin/reset-mfa.ts",
+    "admin:set-track": "tsx admin/set-track.ts",
+    "admin:set-role": "tsx admin/set-role-override.ts",
+    "admin:authorise-stage1": "tsx admin/authorise-stage1.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "music-metadata": "^11.2.0",
+    "pg": "^8.23.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
+  }
+}

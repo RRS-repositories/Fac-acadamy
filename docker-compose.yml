@@ -1,0 +1,79 @@
+# FAC Academy: LOCAL DEVELOPMENT ONLY. Synthetic data only.
+# Production does not use this file. It uses the CRM's Postgres (schema `academy`,
+# role `academy_app`), real S3 and SES.
+#
+# Start:  docker compose up -d
+# Every credential below is a local-only placeholder, never used anywhere else.
+
+name: fac-academy
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: academy_dev
+      POSTGRES_USER: academy
+      POSTGRES_PASSWORD: academy_local_only
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - academy-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U academy -d academy_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '127.0.0.1:6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Stands in for S3 locally. API on 9000, web console on 9001.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: academy-local
+      MINIO_ROOT_PASSWORD: academy_local_only
+    ports:
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
+    volumes:
+      - academy-minio:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: creates the private bucket, then exits.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 academy-local academy_local_only &&
+      mc mb --ignore-existing local/academy-local &&
+      mc anonymous set none local/academy-local &&
+      echo 'bucket academy-local ready (private)'
+      "
+    restart: 'no'
+
+  # Catches every email the app sends locally. SMTP on 1025, inbox UI on 8025.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+
+volumes:
+  academy-pg:
+  academy-minio:

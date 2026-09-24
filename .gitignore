@@ -1,0 +1,50 @@
+# --- Secrets: only .env.example is committed -------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Dependencies and build output ------------------------------------------
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+playwright-report/
+test-results/
+blob-report/
+
+# --- Media never enters the repo (D15: it lives in MEDIA_ROOT on disk) ------
+# The local MEDIA_ROOT. Real recordings land here while developing; nothing in
+# it is ever committed.
+.media/
+*.mp3
+*.mp4
+*.wav
+*.m4a
+*.mov
+*.webm
+
+# --- The prototype embeds real client call recordings and staff details -----
+# The seed script reads it through PROTOTYPE_PATH, outside the repo.
+FAC-Academy-Portal*.html
+build-pack/
+
+# --- Data exports and one-off files (DATA-HYGIENE-RULES) --------------------
+*.xlsx
+*.xls
+*.csv
+*.dump
+*.sql.gz
+scratch/
+tmp/
+
+# --- Personal notes, not part of the project --------------------------------
+worklog.txt
+
+# --- Editors and OS ---------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log

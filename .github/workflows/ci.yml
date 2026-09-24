@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Throw-away databases, used from S01. Synthetic data only.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: academy_ci
+          POSTGRES_USER: academy
+          POSTGRES_PASSWORD: academy_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U academy -d academy_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # The flag is on only here; production stays off until Brad signs off.
+      ACADEMY_V2: 'true'
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: academy_ci
+      DB_USER: academy
+      DB_PASSWORD: academy_ci_only
+      DB_SSL: 'false'
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-only-dummy-session-secret-not-used-anywhere-else
+      # Lets server/test/db/migrations.test.ts wipe and re-migrate this throw-away DB.
+      MIGRATION_TEST_DB_NAME: academy_ci
+      # The migration suite drops the academy schema, so it gets its own database.
+      MIGRATIONS_TEST_DB_NAME: academy_migrations_ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Forbidden files (media, prototype, .env, exports)
+        run: npm run check:files
+
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+
+      # Applies server/migrations to the throw-away Postgres above. The
+      # --expect-db guard refuses to write to any other database.
+      - name: Create the migration-test database
+        run: PGPASSWORD=academy_ci_only psql -h localhost -U academy -d academy_ci -c 'CREATE DATABASE academy_migrations_ci' -c 'SELECT 1'
+
+      - name: Migrations
+        run: npm run migrate -w @fac-academy/server -- --commit --expect-db academy_ci
+
+      # Runs every workspace's tests AND enforces test-skips.json. Several
+      # suites need the training content, which is seeded from the prototype
+      # HTML and can never be committed, so here they skip. This step fails if
+      # a suite fails, if a file skips tests that the ledger does not declare,
+      # if it skips more than the ledger allows, or if a ledger entry has
+      # become stale (--strict). It also writes the list of tests that did not
+      # run, and what is therefore unproven, into the job summary.
+      - name: Tests, and the skipped-test ledger
+        run: npm run check:skips -- --strict
+
+      - run: npm run build
+
+      - name: Bundle leak check (no answers or lesson text in client/dist)
+        run: npm run check:bundle
