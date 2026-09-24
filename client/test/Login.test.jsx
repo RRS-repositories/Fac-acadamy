@@ -216,7 +216,10 @@ describe('Login', () => {
     expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
   });
 
-  it('staff tab + a manager account lands on training, with the Management link', async () => {
+  // The account decides where you land, not the tab. A manager who picked the
+  // Staff tab still gets the roster: the dashboard is what they open the
+  // academy for, and their own training is a sidebar link away.
+  it('staff tab + a manager account STILL lands on the roster', async () => {
     mockFetch({
       ...TRACK,
       'POST /api/auth/login': [200, { next: 'challenge' }],
@@ -226,10 +229,9 @@ describe('Login', () => {
     signIn('manager.b@example.com');
     await screen.findByRole('heading', { name: 'Enter your authenticator code' });
     await enterCode('Verify and sign in');
-    expect(
-      await screen.findByRole('heading', { name: /welcome back, manager/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Management' })).toHaveAttribute('href', '/manager');
+    expect(await screen.findByRole('heading', { name: /trainee roster/i })).toBeInTheDocument();
+    // And no calm line: this account does have management access.
+    expect(screen.queryByText(/doesn't have management access/i)).not.toBeInTheDocument();
   });
 
   it('manager tab + a staff account lands on training with one calm line and no manager UI', async () => {
