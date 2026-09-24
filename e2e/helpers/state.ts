@@ -16,17 +16,22 @@ export interface PreparedAccount {
   traineeId: number;
 }
 
+export interface FixtureRecording {
+  recordingId: number;
+  stageCode: string;
+  durationSecs: number;
+  mediaKey: string;
+  byteSize: number;
+}
+
 export interface PreparedState {
   accounts: PreparedAccount[];
   staff: string[];
   manager: string;
-  fixture: {
-    recordingId: number;
-    stageCode: string;
-    durationSecs: number;
-    mediaKey: string;
-    byteSize: number;
-  };
+  /** False on a migrated-but-unseeded database (a CI runner). */
+  seeded: boolean;
+  /** Null when nothing is seeded: there is no stage to hang a recording on. */
+  fixture: FixtureRecording | null;
 }
 
 let cached: PreparedState | null = null;
@@ -44,6 +49,22 @@ export function prepared(): PreparedState {
   }
   cached = JSON.parse(raw) as PreparedState;
   return cached;
+}
+
+/**
+ * The fixture recording, or a clear failure. Only a spec that needs the seeded
+ * content calls this, and such a spec is never selected on an unseeded
+ * database — so reaching the throw means the selection is wrong, not the app.
+ */
+export function requireFixture(): FixtureRecording {
+  const fixture = prepared().fixture;
+  if (fixture === null) {
+    throw new Error(
+      'e2e: there is no fixture recording because this database has no training content. ' +
+        'This test needs seeded content and should not have been selected here.',
+    );
+  }
+  return fixture;
 }
 
 export function accountFor(email: string): PreparedAccount {

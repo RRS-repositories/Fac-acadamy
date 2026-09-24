@@ -36,6 +36,42 @@ see "Why it is not more parallel".
 The security spec calls the bundle leak checker, so `client/dist` has to exist:
 `npm run build -w client` if it does not.
 
+## In CI: 8 of the 41 tests, and the other 33 declared
+
+GitHub Actions has no training content. The content is seeded from the approved
+prototype HTML, which carries six real client call recordings and real staff
+names and so can never be committed, so a runner's database is migrated but
+**empty**. Almost everything here walks a stage, a lesson, a quiz or a
+recording, and on an empty database that is impossible.
+
+So every test sits on one side of one tag, `@content-free`
+(`helpers/tags.ts`):
+
+* **tagged (8)** — needs no stage, lesson, quiz, recording or certificate.
+  These run on every push, headless, against the **built** app: `vite preview`
+  serving `client/dist` with `node server/dist/api.js` behind it.
+* **untagged (33)** — needs the seeded content. These cannot run in CI at all.
+
+Both sets are written down in `e2e-coverage.json` — for the 33, with a reason
+and a sentence saying what is therefore unproven — and
+`scripts/check-e2e-coverage.mjs` fails the build if the tag set and the ledger
+stop agreeing, in either direction. The same script writes the list into the
+GitHub job summary, so the green tick always arrives beside the sentence saying
+how much did not run.
+
+Two guards, not one: `global-setup.ts` also refuses to run on a database with no
+content unless the selection is restricted to the tag. A run can never quietly
+shrink to a handful of tests and still look like a pass.
+
+```bash
+npm run check:e2e                                   # the ledger, no DB needed
+npm run test:e2e:content-free -w @fac-academy/e2e   # what CI runs
+```
+
+Running the whole suite needs a seeded database, which means a developer's
+machine. Nothing in CI covers the 33; that is the price of never committing the
+prototype, and it is recorded rather than hidden.
+
 ## What it does to the database first
 
 `ops/dev/e2e-prepare.ts` runs in the global setup (and again, with `--clean`, in

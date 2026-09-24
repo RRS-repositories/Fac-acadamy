@@ -1,0 +1,61 @@
+{
+  "tag": "@content-free",
+  "runsAnywhere": {
+    "e2e/tests/manager.spec.ts": [
+      "the CSV has a row for every trainee on the roster",
+      "disabling a trainee ends their session within five seconds"
+    ],
+    "e2e/tests/pii.spec.ts": ["the scanner works (the control for everything below)"],
+    "e2e/tests/security.spec.ts": [
+      "every manager route answers 403, and no management link is shown",
+      "the built bundle contains no lesson text and no answer",
+      "says the same thing about everything that is not a certificate"
+    ],
+    "e2e/tests/smoke.spec.ts": [
+      "the app is up and the flag is on",
+      "a signed-out visitor is sent to sign in, and the API refuses them"
+    ]
+  },
+  "needsSeededContent": {
+    "e2e/tests/journey-admin.spec.ts": {
+      "tests": 1,
+      "reason": "the whole point of it is walking the Admin programme stage by stage in a browser, and a runner has no stages: the content is seeded from the approved prototype HTML, which carries six real client call recordings and real staff names and so can never be committed",
+      "unproven": "the Admin department journey end to end: that a trainee can read the lessons of s6 and dA1 and answer their quizzes question by question in the browser, that finishing the last core stage raises the Level 1 completion banner and issues a certificate that downloads as a real PDF and verifies on the public page, and that finishing the two department modules issues a second, different certificate"
+    },
+    "e2e/tests/journey-cs.spec.ts": {
+      "tests": 1,
+      "reason": "it walks Customer Service stage s4 in a browser and listens to a real recording in real time; a runner has neither the stage nor the empty recording slot the fixture WAV is installed into",
+      "unproven": "the Customer Service journey end to end: that the lessons must be read before the quiz opens, that the listening gate is paid in real wall-clock time beacon by beacon and cannot be skipped, that a deliberately wrong quiz is failed and says so, that the retake passes, that passing opens exactly the next stage, and that a real multi-minute recording streams while its own stage's quiz stays refused because nobody has listened to it"
+    },
+    "e2e/tests/locked.spec.ts": {
+      "tests": 10,
+      "reason": "the lock rules are checked against real seeded stages on all nine tracks — there are none here, and a sweep over an empty list would pass while proving nothing",
+      "unproven": "the lock rules as a trainee meets them in the browser: that on each of the nine tracks every stage after the first is refused with 403 and the name of the stage that must be passed first, that the stage's quiz is refused too rather than only its page, that a locked stage's page shows the locked card and carries none of its lesson text, that a stage belonging to another track answers exactly like a stage that does not exist so the other tracks cannot be mapped, and that a lesson inside a locked stage cannot be marked read by its id"
+    },
+    "e2e/tests/manager.spec.ts": {
+      "tests": 4,
+      "reason": "these four put real quiz attempts and real per-track stage lists behind the manager's screens. The other two tests in this file — the CSV export and disabling a trainee — need no content and do run here",
+      "unproven": "that a trainee's failed attempt appears on the manager's roster within one 30-second refresh without reloading and is coloured as a fail, that the online dot tells a signed-in trainee from one who has never signed in, that reassigning a track from the manager's screen changes exactly which stages that trainee then sees, that 'preview as track' shows a track's stage list without touching the trainee being looked at, and that the roster and trainee detail payloads carry no lesson, question or answer"
+    },
+    "e2e/tests/pii.spec.ts": {
+      "tests": 2,
+      "reason": "the sweep's subject is the seeded content itself — every lesson, question, option, stage title and recording description in the database, plus the pages that render them. With nothing seeded there is nothing to sweep, and a clean result would mean only that the database is empty. The scanner's own control test does run here",
+      "unproven": "that no real person from the prototype reaches a trainee: not through /api/me, /api/track, the status guide, the certificate list, an open stage, its lessons or its quiz, not through the rendered dashboard, stage, status-guide and certificate pages, and not in any lesson body, question, option, stage title or recording description in the seeded library. Also unproven: that a quiz answer or a lesson sentence never travels with the track list, and that a refused locked stage carries no content at all"
+    },
+    "e2e/tests/security.spec.ts": {
+      "tests": 2,
+      "reason": "one reads a real quiz payload and the other streams real call recordings; both need seeded rows. The other three tests in this file — the staff/manager role boundary, the built bundle, and the public certificate check — need no content and do run here",
+      "unproven": "that a quiz served to the browser carries no correct answer in any shape (no key that could name it, and every option exactly { id, text }), and that media is refused three ways: 401 with no session, 403 on a stage the trainee has not unlocked, and 400/404 for a crafted id that must never reach the filesystem"
+    },
+    "e2e/tests/tracks.spec.ts": {
+      "tests": 9,
+      "reason": "each test asserts the dashboard's stage list against ops/fixtures/expected-track-visibility.json, and with no stages seeded the page lists nothing on every track",
+      "unproven": "that each of the nine tracks shows exactly the stages PROJECT-PLAN §1 says it should, in unlock order, on the dashboard AND in the /api/track payload the dashboard was built from; and that on day one the first stage is available and every later one is locked"
+    },
+    "e2e/tests/ux.spec.ts": {
+      "tests": 4,
+      "reason": "all four need a real lesson or a real quiz on screen: two scroll rules measured on a stage's quiz and lesson pages, and the 'next up' pulse, which is drawn on a stage card",
+      "unproven": "the two movement rules and the motion preference: that choosing a quiz answer never moves the page under the pointer, that opening the next lesson returns to the top of the page rather than halfway down, and that the next-up pulse stops animating under prefers-reduced-motion while still animating without it"
+    }
+  }
+}

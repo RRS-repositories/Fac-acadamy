@@ -96,3 +96,174 @@ jobs:
 
       - name: Bundle leak check (no answers or lesson text in client/dist)
         run: npm run check:bundle
+
+  # ---------------------------------------------------------------------------
+  # The browser suite (Playwright, e2e/).
+  #
+  # Only part of it can run here, and the part that cannot is declared rather
+  # than hidden. The training content — stages, lessons, quizzes, recordings —
+  # is seeded from the approved prototype HTML, which carries six real client
+  # call recordings and real staff names and so can never be committed. A
+  # runner therefore has a migrated but EMPTY database.
+  #
+  # Every test is on one side of the `@content-free` tag (e2e/helpers/tags.ts).
+  # This job runs the tagged ones against the REAL BUILD — `node
+  # server/dist/api.js` and `vite preview` serving client/dist — and
+  # `check:e2e` fails the job if the tagged set stops matching
+  # e2e-coverage.json, so nobody can quietly add or lose a browser test. The
+  # same step writes into the job summary how many browser journeys did not run
+  # and what that leaves unchecked.
+  # ---------------------------------------------------------------------------
+  browser:
+    name: browser journeys (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # Throw-away, synthetic data only. The database name must contain 'test':
+    # ops/dev/lib.ts refuses to touch anything that does not look local.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: academy_e2e_test
+          POSTGRES_USER: academy
+          POSTGRES_PASSWORD: academy_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U academy -d academy_e2e_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      # The flag is on only here; production stays off until Brad signs off.
+      ACADEMY_V2: 'true'
+      ACADEMY_PROVISIONING: 'false'
+      STAGE1_AUTH_REQUIRED: 'false'
+      ACADEMY_NOTIFY_MODE: 'off'
+      # The API, and the static server in front of it. Both are started below.
+      PORT: '4199'
+      HOST: 127.0.0.1
+      PUBLIC_BASE_URL: http://localhost:4173
+      VITE_API_TARGET: http://127.0.0.1:4199
+      VITE_PREVIEW_PORT: '4173'
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: academy_e2e_test
+      DB_USER: academy
+      DB_PASSWORD: academy_ci_only
+      DB_SSL: 'false'
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-only-dummy-session-secret-not-used-anywhere-else
+      # Throw-away key for a throw-away database: base64 of the 32 ASCII bytes
+      # "ci-only-dummy-academy-mfa-key!!!". Nothing real is ever encrypted here.
+      MFA_ENCRYPTION_KEY: Y2ktb25seS1kdW1teS1hY2FkZW15LW1mYS1rZXkhISE=
+      COOKIE_SECURE: 'false'
+      # Sign-in goes through the mock CRM's invented @example.com accounts, so
+      # no CRM is called; the URL only has to parse.
+      CRM_AUTH_MODE: mock
+      CRM_AUTH_URL: http://localhost:3000/api/auth/academy-verify
+      E2E_BASE_URL: http://localhost:4173
+      E2E_DB_NAME: academy_e2e_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Media lives on disk (D15), outside the checkout so nothing it writes
+      # can be mistaken for a repository file.
+      - name: Media folder
+        run: |
+          echo "MEDIA_ROOT=${RUNNER_TEMP}/academy-media" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/academy-media"
+
+      # The ledger, first: it needs neither a database nor a browser, it says
+      # in the job summary how much of the suite is about to be skipped and
+      # what that leaves unproven, and it fails if that set has changed.
+      - name: Browser-test coverage ledger (what will NOT run here, and why)
+        run: npm run check:e2e
+
+      - name: Playwright version (for the browser cache key)
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Chromium download
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - name: Install Chromium's system libraries (browser came from the cache)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+        working-directory: e2e
+
+      # The suite drives the BUILT app, not the dev servers: client/dist served
+      # by `vite preview`, and server/dist/api.js run by node.
+      - run: npm run build
+
+      - name: Migrations
+        run: npm run migrate -w @fac-academy/server -- --commit --expect-db academy_e2e_test
+
+      - name: Start the API and the built client
+        run: |
+          node server/dist/api.js > "${RUNNER_TEMP}/api.log" 2>&1 &
+          npm run preview -w @fac-academy/client > "${RUNNER_TEMP}/preview.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:4173/api/health > /dev/null 2>&1; then
+              echo "up after ${i}s:"; curl -fs http://localhost:4173/api/health; echo
+              exit 0
+            fi
+            sleep 1
+          done
+          echo '::error::the app did not come up'
+          echo '--- api.log ---';     cat "${RUNNER_TEMP}/api.log"     || true
+          echo '--- preview.log ---'; cat "${RUNNER_TEMP}/preview.log" || true
+          exit 1
+
+      # Global setup refuses to run anything but the tagged tests on a database
+      # with no content in it, so this selection is enforced twice: here, and
+      # in e2e/global-setup.ts.
+      - name: Run the browser tests that need no training content
+        run: npm run test:e2e:content-free -w @fac-academy/e2e
+
+      - name: Playwright HTML report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
+
+      - name: Server and client logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-logs
+          path: |
+            ${{ runner.temp }}/api.log
+            ${{ runner.temp }}/preview.log
+          retention-days: 7

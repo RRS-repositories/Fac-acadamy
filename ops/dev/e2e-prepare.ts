@@ -31,6 +31,13 @@
 // `--clean` reverses (4) — the slot goes back to "coming soon" and the WAV is
 // deleted — and leaves the accounts alone.
 //
+// `--allow-unseeded` is for a machine that has the schema but no training
+// content — a CI runner, which has no prototype HTML to seed from. (1)-(3)
+// still work, because an account needs no stage; (4) is impossible, so it is
+// skipped and the result says `seeded: false`. WITHOUT the flag an empty
+// database is an error, because on a developer's machine it means the seed has
+// been lost, and carrying on quietly would hide it.
+//
 // The guards are the ones every ops/dev script uses: --expect-db must LOOK
 // local ('dev' or 'test', never 'prod'/'live'), and must equal DB_NAME and
 // current_database(). See ops/dev/lib.ts. Nothing here may run in production.
@@ -154,12 +161,13 @@ export function makeFixtureWav(seconds = FIXTURE_DURATION_SECS): Buffer {
 // ---------------------------------------------------------------------------
 
 export const E2E_PREPARE_USAGE =
-  'Usage: e2e-prepare --expect-db <database name> [--clean] [--json]';
+  'Usage: e2e-prepare --expect-db <database name> [--clean] [--json] [--allow-unseeded]';
 
 export interface E2ePrepareArgs {
   expectDb: string;
   clean: boolean;
   json: boolean;
+  allowUnseeded: boolean;
 }
 
 export function parseE2ePrepareArgs(argv: string[]): E2ePrepareArgs | 'help' {
@@ -171,6 +179,7 @@ export function parseE2ePrepareArgs(argv: string[]): E2ePrepareArgs | 'help' {
       'expect-db': { type: 'string' },
       clean: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
+      'allow-unseeded': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -179,6 +188,7 @@ export function parseE2ePrepareArgs(argv: string[]): E2ePrepareArgs | 'help' {
     expectDb: parseExpectDb(values['expect-db']),
     clean: values.clean === true,
     json: values.json === true,
+    allowUnseeded: values['allow-unseeded'] === true,
   };
 }
 
@@ -190,17 +200,27 @@ export interface PreparedAccount extends E2eAccount {
   traineeId: number;
 }
 
+export interface FixtureRecording {
+  recordingId: number;
+  stageCode: string;
+  durationSecs: number;
+  mediaKey: string;
+  byteSize: number;
+}
+
 export interface PrepareResult {
   accounts: PreparedAccount[];
   staff: string[];
   manager: string;
-  fixture: {
-    recordingId: number;
-    stageCode: string;
-    durationSecs: number;
-    mediaKey: string;
-    byteSize: number;
-  };
+  /**
+   * False when the database has been migrated but never seeded with the
+   * training content — the state of a CI runner, which has no prototype HTML
+   * to seed from. Everything that needs a stage is then impossible, and the
+   * suite must be restricted to the tests that need none.
+   */
+  seeded: boolean;
+  /** Null when `seeded` is false: there is no stage to hang a recording on. */
+  fixture: FixtureRecording | null;
   cleared: Record<string, number>;
   certificatesRemoved: number;
 }
@@ -286,7 +306,7 @@ export async function removeFixtureRecording(db: Queryable): Promise<number> {
  * An existing row is used rather than a new one, so the stage's recording count
  * is unchanged and `--clean` restores the seed exactly.
  */
-export async function installFixtureRecording(db: Queryable): Promise<PrepareResult['fixture']> {
+export async function installFixtureRecording(db: Queryable): Promise<FixtureRecording> {
   await removeFixtureRecording(db);
 
   const wav = makeFixtureWav();
@@ -336,8 +356,39 @@ export async function installFixtureRecording(db: Queryable): Promise<PrepareRes
   };
 }
 
+/** True when the training content has been seeded (there is at least one stage). */
+export async function hasSeededContent(db: Queryable): Promise<boolean> {
+  const { rows } = await db.query<{ n: string }>('SELECT count(*)::text AS n FROM academy.stages');
+  return Number(rows[0]?.n ?? '0') > 0;
+}
+
+export interface PrepareOptions {
+  /**
+   * Allow a database with no training content in it at all. The accounts are
+   * still prepared (they need no stage), the fixture recording is not, and the
+   * result says `seeded: false` so the caller can refuse to run anything that
+   * would need a stage. Without this, an empty database is an error: on a
+   * developer's machine it means the seed has been lost, and quietly carrying
+   * on would turn 41 browser tests into a handful without saying so.
+   */
+  allowUnseeded?: boolean;
+}
+
 /** Everything the suite needs, in one transaction. */
-export async function prepareE2e(db: Queryable): Promise<PrepareResult> {
+export async function prepareE2e(
+  db: Queryable,
+  options: PrepareOptions = {},
+): Promise<PrepareResult> {
+  const seeded = await hasSeededContent(db);
+  if (!seeded && options.allowUnseeded !== true) {
+    throw new DevError(
+      'This database has no training content: academy.stages is empty, so there is nothing ' +
+        'for the browser suite to walk through. Seed it (ops/seed/seed-content.ts, which reads ' +
+        'the approved prototype through PROTOTYPE_PATH), or pass --allow-unseeded to prepare ' +
+        'the accounts only — which leaves every test that needs a stage unable to run.',
+    );
+  }
+
   // The nine per-track accounts and the manager override, progress cleared.
   await seedTestAccounts(db, { reset: true });
 
@@ -356,12 +407,13 @@ export async function prepareE2e(db: Queryable): Promise<PrepareResult> {
   // generate a real code.
   await db.query('DELETE FROM academy.trainee_mfa WHERE trainee_id = ANY($1::bigint[])', [ids]);
 
-  const fixture = await installFixtureRecording(db);
+  const fixture = seeded ? await installFixtureRecording(db) : null;
 
   return {
     accounts,
     staff: E2E_STAFF_ACCOUNTS.map((a) => a.email),
     manager: E2E_MANAGER_ACCOUNT.email,
+    seeded,
     fixture,
     cleared,
     certificatesRemoved,
@@ -391,7 +443,7 @@ async function main(): Promise<number> {
         return 0;
       }
 
-      const result = await prepareE2e(client);
+      const result = await prepareE2e(client, { allowUnseeded: args.allowUnseeded });
       await client.query('COMMIT');
 
       if (args.json) {
@@ -412,12 +464,19 @@ async function main(): Promise<number> {
           `${String(result.certificatesRemoved)} certificate(s) removed; ` +
           `authenticators reset.`,
       );
-      console.log(
-        `Fixture recording ${String(result.fixture.recordingId)} on stage ` +
-          `${result.fixture.stageCode}: ${String(result.fixture.durationSecs)} s, ` +
-          `${String(result.fixture.byteSize)} bytes. ` +
-          'Run with --clean to put the slot back to "coming soon".',
-      );
+      if (result.fixture === null) {
+        console.log(
+          'NO TRAINING CONTENT in this database (--allow-unseeded): no fixture recording was ' +
+            'installed, and nothing that needs a stage, a lesson or a quiz can be tested here.',
+        );
+      } else {
+        console.log(
+          `Fixture recording ${String(result.fixture.recordingId)} on stage ` +
+            `${result.fixture.stageCode}: ${String(result.fixture.durationSecs)} s, ` +
+            `${String(result.fixture.byteSize)} bytes. ` +
+            'Run with --clean to put the slot back to "coming soon".',
+        );
+      }
       return 0;
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);

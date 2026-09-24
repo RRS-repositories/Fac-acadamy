@@ -3,6 +3,7 @@ import { fastForwardStages, getJson, getTrack, readLesson, submitQuiz } from '..
 import { lessonIdsForStage, wrongAnswersForStage } from '../helpers/db.js';
 import { expectedStages } from '../helpers/expected.js';
 import { expect, test } from '../helpers/test.js';
+import { CONTENT_FREE_TAG } from '../helpers/tags.js';
 
 // 6. THE MANAGER.
 //
@@ -106,28 +107,35 @@ test('the roster shows a trainee, their attempts and who is online', async ({
   );
 });
 
-test('the CSV has a row for every trainee on the roster', async ({ managerPage }) => {
-  await managerPage.goto('/manager');
-  const roster = await getJson<Roster>(managerPage, '/api/manager/roster');
-  expect(roster.status).toBe(200);
+// CONTENT_FREE_TAG: a roster is a list of people, not of training. This asks
+// only that the export has a row per trainee and carries no markup, which is
+// as true of an unseeded database as of a seeded one — so it runs in CI.
+test(
+  'the CSV has a row for every trainee on the roster',
+  { tag: CONTENT_FREE_TAG },
+  async ({ managerPage }) => {
+    await managerPage.goto('/manager');
+    const roster = await getJson<Roster>(managerPage, '/api/manager/roster');
+    expect(roster.status).toBe(200);
 
-  const download = managerPage.waitForEvent('download');
-  await managerPage.getByTestId('export-csv-button').click();
-  const file = await (await download).path();
-  const csv = readFileSync(file, 'utf8');
+    const download = managerPage.waitForEvent('download');
+    await managerPage.getByTestId('export-csv-button').click();
+    const file = await (await download).path();
+    const csv = readFileSync(file, 'utf8');
 
-  const lines = csv.trim().split(/\r?\n/);
-  expect(lines[0], 'a header row').toMatch(/^id,/);
-  // Every data row starts with the trainee id, so this counts rows and not
-  // newlines that happen to sit inside a quoted field.
-  const dataRows = lines.filter((line) => /^\d+,/.test(line));
-  expect(dataRows.length, 'one row per trainee').toBe(roster.body.trainees.length);
-  for (const trainee of roster.body.trainees) {
-    expect(csv).toContain(trainee.fullName);
-  }
-  // A manager export is a list of people: it must not carry training content.
-  expect(csv).not.toMatch(/<p>|<h[1-6]>/);
-});
+    const lines = csv.trim().split(/\r?\n/);
+    expect(lines[0], 'a header row').toMatch(/^id,/);
+    // Every data row starts with the trainee id, so this counts rows and not
+    // newlines that happen to sit inside a quoted field.
+    const dataRows = lines.filter((line) => /^\d+,/.test(line));
+    expect(dataRows.length, 'one row per trainee').toBe(roster.body.trainees.length);
+    for (const trainee of roster.body.trainees) {
+      expect(csv).toContain(trainee.fullName);
+    }
+    // A manager export is a list of people: it must not carry training content.
+    expect(csv).not.toMatch(/<p>|<h[1-6]>/);
+  },
+);
 
 test('reassigning a track changes what the trainee sees', async ({
   staff,
@@ -158,57 +166,63 @@ test('reassigning a track changes what the trainee sees', async ({
   expect((await getTrack(staffPage)).track).toBe('DEBT');
 });
 
-test('disabling a trainee ends their session within five seconds', async ({
-  staff,
-  staffPage,
-  managerPage,
-}) => {
-  test.setTimeout(3 * 60_000);
-  await staff.reset('CS');
-  // A working session first, so the change of state is the thing measured.
-  await staffPage.goto('/');
-  expect((await getJson(staffPage, '/api/track')).status).toBe(200);
+// CONTENT_FREE_TAG: sign in, be disabled, be thrown out, be re-enabled, sign in
+// again. Not one step of it touches a stage, so CI runs it — and it is the one
+// place CI proves the real sign-in journey (the login screen, the authenticator
+// enrolment, the code) works in a browser at all.
+test(
+  'disabling a trainee ends their session within five seconds',
+  { tag: CONTENT_FREE_TAG },
+  async ({ staff, staffPage, managerPage }) => {
+    test.setTimeout(3 * 60_000);
+    await staff.reset('CS');
+    // A working session first, so the change of state is the thing measured.
+    await staffPage.goto('/');
+    expect((await getJson(staffPage, '/api/track')).status).toBe(200);
 
-  await managerPage.goto('/manager');
-  const row = managerPage.locator(`[data-trainee="${String(staff.account.traineeId)}"]`);
-  await expect(row).toBeVisible();
-  await row.getByRole('button', { name: 'Disable', exact: true }).click();
-  await row.getByRole('button', { name: 'Yes, disable' }).click();
+    await managerPage.goto('/manager');
+    const row = managerPage.locator(`[data-trainee="${String(staff.account.traineeId)}"]`);
+    await expect(row).toBeVisible();
+    await row.getByRole('button', { name: 'Disable', exact: true }).click();
+    await row.getByRole('button', { name: 'Yes, disable' }).click();
 
-  // Timed from the moment the manager confirmed. Disabling deletes every
-  // session of that trainee, so the next request is refused either because the
-  // session is gone (401) or because the account is disabled (403) — both mean
-  // they are out; what is being held to five seconds is how long it takes.
-  const startedAt = Date.now();
-  let refusal = { status: 200, body: {} as { error?: string } };
-  while (Date.now() - startedAt < 15_000) {
-    const response = await getJson<{ error?: string }>(staffPage, '/api/track');
-    if (response.status !== 200) {
-      refusal = { status: response.status, body: response.body };
-      break;
+    // Timed from the moment the manager confirmed. Disabling deletes every
+    // session of that trainee, so the next request is refused either because the
+    // session is gone (401) or because the account is disabled (403) — both mean
+    // they are out; what is being held to five seconds is how long it takes.
+    const startedAt = Date.now();
+    let refusal = { status: 200, body: {} as { error?: string } };
+    while (Date.now() - startedAt < 15_000) {
+      const response = await getJson<{ error?: string }>(staffPage, '/api/track');
+      if (response.status !== 200) {
+        refusal = { status: response.status, body: response.body };
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  const took = Date.now() - startedAt;
-  expect([401, 403], 'the disabled account is refused').toContain(refusal.status);
-  expect(['not_signed_in', 'disabled']).toContain(refusal.body.error);
-  expect(took, `the session ended after ${String(took)}ms`).toBeLessThan(5_000);
-  console.log(`disable → session refused after ${String(took)}ms (${String(refusal.status)})`);
+    const took = Date.now() - startedAt;
+    expect([401, 403], 'the disabled account is refused').toContain(refusal.status);
+    expect(['not_signed_in', 'disabled']).toContain(refusal.body.error);
+    expect(took, `the session ended after ${String(took)}ms`).toBeLessThan(5_000);
+    console.log(`disable → session refused after ${String(took)}ms (${String(refusal.status)})`);
 
-  // The screens agree: the roster greys them out, and the trainee is put out.
-  await expect(row).toHaveAttribute('data-disabled', 'true');
-  await staffPage.goto('/');
-  await expect(staffPage.getByRole('heading', { name: 'Sign in to start training' })).toBeVisible();
+    // The screens agree: the roster greys them out, and the trainee is put out.
+    await expect(row).toHaveAttribute('data-disabled', 'true');
+    await staffPage.goto('/');
+    await expect(
+      staffPage.getByRole('heading', { name: 'Sign in to start training' }),
+    ).toBeVisible();
 
-  // Put it back, and sign in again so the next spec in this worker has a
-  // session. Re-enabling is a manager action too, so it is worth asserting.
-  await row.getByRole('button', { name: 'Re-enable' }).click();
-  await expect(row).toHaveAttribute('data-disabled', 'false');
-  await staff.refresh();
-  const fresh = await staff.open();
-  expect((await getJson(fresh, '/api/track')).status).toBe(200);
-  await fresh.context().close();
-});
+    // Put it back, and sign in again so the next spec in this worker has a
+    // session. Re-enabling is a manager action too, so it is worth asserting.
+    await row.getByRole('button', { name: 'Re-enable' }).click();
+    await expect(row).toHaveAttribute('data-disabled', 'false');
+    await staff.refresh();
+    const fresh = await staff.open();
+    expect((await getJson(fresh, '/api/track')).status).toBe(200);
+    await fresh.context().close();
+  },
+);
 
 test('a manager can preview a track without touching anybody', async ({ managerPage, staff }) => {
   await managerPage.goto('/manager/preview/FOS');

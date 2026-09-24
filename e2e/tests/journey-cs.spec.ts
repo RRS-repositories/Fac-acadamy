@@ -6,7 +6,7 @@ import {
   lessonTextSampleForStage,
   playableRecordings,
 } from '../helpers/db.js';
-import { prepared } from '../helpers/state.js';
+import { requireFixture } from '../helpers/state.js';
 import { expect, test } from '../helpers/test.js';
 
 // 3a. THE CUSTOMER SERVICE JOURNEY.
@@ -66,7 +66,7 @@ test('a Customer Service trainee: lessons, a real listen, a fail, a retake, the 
 }) => {
   test.setTimeout(5 * 60_000);
   const page = staffPage;
-  const fixture = prepared().fixture;
+  const fixture = requireFixture();
   expect(fixture.stageCode, 'the fixture recording belongs to this stage').toBe(STAGE);
 
   await staff.reset('CS');

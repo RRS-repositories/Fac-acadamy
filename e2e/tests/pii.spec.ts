@@ -2,6 +2,7 @@ import { getJson, getQuiz, getStage, getTrack, readLesson } from '../helpers/api
 import { allContentText, lessonIdsForStage } from '../helpers/db.js';
 import { canaryFor, contentCanaries, piiCanaries, scan } from '../helpers/canaries.js';
 import { expect, test } from '../helpers/test.js';
+import { CONTENT_FREE_TAG } from '../helpers/tags.js';
 
 // 8. THE PII SWEEP.
 //
@@ -21,23 +22,27 @@ import { expect, test } from '../helpers/test.js';
 
 const CONTROL = 'Wilhelmina Quailsworth of 42 Fictional Terrace';
 
-test('the scanner works (the control for everything below)', async () => {
-  const canary = canaryFor(CONTROL, 'control');
-  expect(canary.length).toBeGreaterThan(20);
+test(
+  'the scanner works (the control for everything below)',
+  { tag: CONTENT_FREE_TAG },
+  async () => {
+    const canary = canaryFor(CONTROL, 'control');
+    expect(canary.length).toBeGreaterThan(20);
 
-  expect(scan(`prefix ${CONTROL} suffix`, [canary])).toEqual(['control']);
-  // Whitespace and case are normalised on both sides, as in the bundle check.
-  expect(scan(`  ${CONTROL.toUpperCase().replace(/ /g, '\n')}  `, [canary])).toEqual(['control']);
-  expect(scan('nothing of the sort in here', [canary])).toEqual([]);
+    expect(scan(`prefix ${CONTROL} suffix`, [canary])).toEqual(['control']);
+    // Whitespace and case are normalised on both sides, as in the bundle check.
+    expect(scan(`  ${CONTROL.toUpperCase().replace(/ /g, '\n')}  `, [canary])).toEqual(['control']);
+    expect(scan('nothing of the sort in here', [canary])).toEqual([]);
 
-  // And the fixtures the sweep uses are real fixtures, not empty ones.
-  expect(piiCanaries().length).toBeGreaterThan(0);
-  expect(contentCanaries().length).toBeGreaterThan(0);
-  for (const c of [...piiCanaries(), ...contentCanaries()]) {
-    expect(c.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(c.length).toBeGreaterThan(5);
-  }
-});
+    // And the fixtures the sweep uses are real fixtures, not empty ones.
+    expect(piiCanaries().length).toBeGreaterThan(0);
+    expect(contentCanaries().length).toBeGreaterThan(0);
+    for (const c of [...piiCanaries(), ...contentCanaries()]) {
+      expect(c.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(c.length).toBeGreaterThan(5);
+    }
+  },
+);
 
 test('no response, and no seeded content, carries a real person from the prototype', async ({
   staff,
