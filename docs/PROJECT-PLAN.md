@@ -104,6 +104,12 @@ These add to the standing `GIT-WORKFLOW-RULES` and `DATA-HYGIENE-RULES`, which a
 5. **Secrets only in `.env`.** `.env.example` holds placeholders, and the app refuses to start if a required variable is missing.
 6. **No production details in the repo:** server addresses, paths, credentials and runbooks stay out of git.
 
+### 4.1 The skipped-test ledger (`test-skips.json`)
+
+Rule 1 has a cost: the suites that need the training content — the quiz API, the manager roster, the training read side, the status guide, the certificates — cannot run in CI, because CI has no prototype to seed from. They skip, and a skipped test used to be invisible behind a green tick. `test-skips.json` makes each one a declared, counted fact: for every test file it records how many tests may skip, why they cannot run, and what is therefore unproven, in plain English. `npm run check:skips -- --strict` (the CI test step) runs the suites and fails if a file skips tests it has not declared, skips more than its ceiling, or keeps an entry that no longer skips anything; it also prints the list of tests that did not run into the GitHub job summary.
+
+To update it honestly: run the suites against a **migrated but unseeded** database, the way CI has one, then `npm run check:skips -- --update` to re-record the counts, then write a real reason and a real "unproven" line for every entry by hand. Raising a `max` is a decision, visible in the diff — never a way to quiet the check. The right fix, where one exists, is to make the test run without the content.
+
 ---
 
 ## 5. Architecture
