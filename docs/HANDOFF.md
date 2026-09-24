@@ -1,17 +1,35 @@
 # Handoff — where the FAC Academy project stands
 
-*Last updated: 22 Sep 2026 (second session: client/server layout, subdomain, checklist artifact). Update this file at the end of every working session.*
+*Last updated: 24 Sep 2026 (both repositories merged: academy PR #1, CRM PR #500). Update this file at the end of every working session.*
 
 ## State right now
 
 | Item | State |
 |---|---|
-| Repo | `E:\RRC\fac-academy`, remote `RRS-repositories/Fac-acadamy`. Only the "first commit" README is on GitHub (`main`) |
-| Current branch | `sukhendu/academy-phase-0` (local only; commits: planning docs, Phase 0, CRM DB alignment, mock login, S01 foundation) |
-| Uncommitted files | none |
-| Push | **Nothing further gets pushed until the user says so; everything goes as a whole** |
-| Code | **Phase 0 done (22 Sep).** Workspaces `client` (React + Vite + Tailwind, JSX), `server` (Express 5, strict TS, tsup build, `/api/health` placeholder), `shared` (zod contracts, track codes, scoring rule), `ops`, `e2e`; root ESLint/Prettier/strict tsconfig; `.githooks/pre-push`; docker-compose; `.env.example`; CI workflow; forbidden-file and bundle-leak checks |
-| Next step | **S10 (E2E suite + go-live prep)** — the Playwright journey tests, the backup and restore drill (must include MEDIA_ROOT), a load check, nginx + pm2 + deploy script, DNS/TLS. Still parked: the email provider (everything is composed and recorded, nothing sent), track-from-CRM-role, and who receives manager alerts (default: all managers). S08's queue half and S09 verified locally 23 Sep: 545 tests; BullMQ on Redis with retries, a dead-letter bay and exactly-once after a kill; certificates issue, download and verify publicly |
+| Repo | `E:\RRCac-academy`, remote `RRS-repositories/Fac-acadamy`. **`main` now holds the whole build** — PR #1 merged 24 Sep, 29 commits |
+| Current branch | `main`, clean and in sync with origin |
+| CRM change | **Merged.** `POST /api/auth/academy-verify` is on CRM `main` (PR #500). It returns 404 until `ACADEMY_VERIFY_KEY` is set, so it is inert until Brad turns it on. This was the only CRM change still needed — dropping Mattermost (D18) removed the other |
+| Built and verified locally | S01-S10. 624 unit tests plus 41 browser tests. Content seeded byte-identical from the prototype; the restricted DB login proven unable to read CRM tables; sped-up listen claims earn nothing; disable kills a session in 93 ms; backup + restore drill 9/9 including media; public certificate verify leaks only 5 facts |
+| Deployment target | **Settled 24 Sep: the on-prem Ubuntu VM `crm-prod`, not AWS.** The August "standby" note is stale; the cutover was 17-20 Aug. D7 and D15 stand unchanged. Full runbook lives OUTSIDE the repo at `E:\RRC\Tasks Files\T-22-09\FAC-ACADEMY-DEPLOYMENT-RUNBOOK.md` (it names hosts and paths, which this repo may not) |
+| Next step | Brad deploys the CRM so the verify endpoint is live, then sets `ACADEMY_VERIFY_KEY`. In parallel: the web address decision (below), a fair load re-measurement, Playwright in CI, and synthetic content so CI stops skipping 62 tests |
+
+## Blocked on a decision
+
+| # | Question | Why it blocks |
+|---|---|---|
+| 1 | **The web address**: `academy.rowanroseclaims.co.uk` or `academy.fastactionclaims.com`? | It is printed into every certificate's verification link, so it cannot change afterwards without invalidating certificates already issued. Everything on the server today is published under `rowanroseclaims.co.uk`, but `recruitment.fastactionclaims.com` also exists there |
+| 2 | Email route and mailbox | Nothing is sent; every message is composed and stored, ready (D19) |
+| 3 | Who receives manager alerts | Default is all managers |
+| 4 | Track set automatically from CRM role? | Parked. Managers assign tracks today |
+| 5 | Synthetic training content in the repo? | Would let CI actually run the 62 tests it currently skips, including every test of the quiz grader |
+
+## Known gaps, honestly
+
+- **62 tests do not run in CI** and cannot, without content. They are now declared in `test-skips.json` and the job summary prints what is therefore unproven. The blind spot is bounded and visible, not closed.
+- **The load test fails its target**: 1.5s at 50 users against a 500ms goal — but measured against the dev server with 50 users sharing 5 accounts. Needs a fair re-run against the built server before it means anything.
+- **Playwright is not wired into CI.**
+- **Test accounts still exist** (`track.*`, `shot.*`, `manager.test`, `trainee.one/two`). They must not reach production.
+- **`/opt/crm` has 28 uncommitted files on the server**, so its `git pull --ff-only` deploy will fail until a human clears them. This blocks the CRM deploy that the academy's sign-in depends on.
 
 ## Phase 0 gate results (22 Sep, run locally)
 

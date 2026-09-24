@@ -4,7 +4,8 @@ import path from 'node:path';
 import { getJson, getQuiz, postJson, putJson, readLesson } from '../helpers/api.js';
 import { lessonIdsForStage, playableRecordings } from '../helpers/db.js';
 import { REPO_ROOT } from '../helpers/env.js';
-import { prepared } from '../helpers/state.js';
+import { requireFixture } from '../helpers/state.js';
+import { CONTENT_FREE_TAG } from '../helpers/tags.js';
 import { expect, test } from '../helpers/test.js';
 
 // 7. SECURITY.
@@ -23,56 +24,59 @@ import { expect, test } from '../helpers/test.js';
 const STAGE = 's1';
 
 test.describe('a staff session cannot reach anything a manager can', () => {
-  test('every manager route answers 403, and no management link is shown', async ({
-    staff,
-    staffPage,
-  }) => {
-    await staff.reset('CS');
-    const me = staff.account.traineeId;
+  // CONTENT_FREE_TAG: the role boundary is decided before any content is read,
+  // so every assertion here means the same on an empty database. CI runs it.
+  test(
+    'every manager route answers 403, and no management link is shown',
+    { tag: CONTENT_FREE_TAG },
+    async ({ staff, staffPage }) => {
+      await staff.reset('CS');
+      const me = staff.account.traineeId;
 
-    const reads = [
-      '/api/manager/ping',
-      '/api/manager/roster',
-      '/api/manager/stuck',
-      '/api/manager/export.csv',
-      `/api/manager/trainee/${String(me)}`,
-      '/api/manager/preview/CS',
-      '/api/manager/config',
-    ];
-    for (const path of reads) {
-      const response = await getJson<{ error: string }>(staffPage, path);
-      expect(response.status, `GET ${path}`).toBe(403);
-      expect(response.body, `GET ${path}`).toEqual({ error: 'forbidden' });
-    }
+      const reads = [
+        '/api/manager/ping',
+        '/api/manager/roster',
+        '/api/manager/stuck',
+        '/api/manager/export.csv',
+        `/api/manager/trainee/${String(me)}`,
+        '/api/manager/preview/CS',
+        '/api/manager/config',
+      ];
+      for (const path of reads) {
+        const response = await getJson<{ error: string }>(staffPage, path);
+        expect(response.status, `GET ${path}`).toBe(403);
+        expect(response.body, `GET ${path}`).toEqual({ error: 'forbidden' });
+      }
 
-    // The writes are aimed at the signed-in account itself, so that a broken
-    // guard could not disable or reassign anybody else.
-    for (const path of [
-      `/api/manager/trainees/${String(me)}/disable`,
-      `/api/manager/trainees/${String(me)}/enable`,
-    ]) {
-      const response = await postJson<{ error: string }>(staffPage, path);
-      expect(response.status, `POST ${path}`).toBe(403);
-      expect(response.body).toEqual({ error: 'forbidden' });
-    }
-    const track = await putJson<{ error: string }>(
-      staffPage,
-      `/api/manager/trainees/${String(me)}/track`,
-      { track: 'ADMIN' },
-    );
-    expect(track.status).toBe(403);
-    expect(track.body).toEqual({ error: 'forbidden' });
+      // The writes are aimed at the signed-in account itself, so that a broken
+      // guard could not disable or reassign anybody else.
+      for (const path of [
+        `/api/manager/trainees/${String(me)}/disable`,
+        `/api/manager/trainees/${String(me)}/enable`,
+      ]) {
+        const response = await postJson<{ error: string }>(staffPage, path);
+        expect(response.status, `POST ${path}`).toBe(403);
+        expect(response.body).toEqual({ error: 'forbidden' });
+      }
+      const track = await putJson<{ error: string }>(
+        staffPage,
+        `/api/manager/trainees/${String(me)}/track`,
+        { track: 'ADMIN' },
+      );
+      expect(track.status).toBe(403);
+      expect(track.body).toEqual({ error: 'forbidden' });
 
-    // And the account really is still on the track it was on.
-    const after = await getJson<{ me: { track: string } }>(staffPage, '/api/me');
-    expect(after.body.me.track).toBe('CS');
+      // And the account really is still on the track it was on.
+      const after = await getJson<{ me: { track: string } }>(staffPage, '/api/me');
+      expect(after.body.me.track).toBe('CS');
 
-    // The screens: no link to the management area, and the page itself refuses.
-    await staffPage.goto('/');
-    await expect(staffPage.getByRole('link', { name: 'Management' })).toHaveCount(0);
-    await staffPage.goto('/manager');
-    await expect(staffPage.getByText(/don.t have access to this page/)).toBeVisible();
-  });
+      // The screens: no link to the management area, and the page itself refuses.
+      await staffPage.goto('/');
+      await expect(staffPage.getByRole('link', { name: 'Management' })).toHaveCount(0);
+      await staffPage.goto('/manager');
+      await expect(staffPage.getByText(/don.t have access to this page/)).toBeVisible();
+    },
+  );
 });
 
 test.describe('nothing that should stay on the server reaches the browser', () => {
@@ -97,25 +101,29 @@ test.describe('nothing that should stay on the server reaches the browser', () =
     }
   });
 
-  test('the built bundle contains no lesson text and no answer', async () => {
-    const dist = path.join(REPO_ROOT, 'client', 'dist');
-    expect(
-      existsSync(dist),
-      'client/dist must exist — run `npm run build -w client` before the suite',
-    ).toBe(true);
+  test(
+    'the built bundle contains no lesson text and no answer',
+    { tag: CONTENT_FREE_TAG },
+    async () => {
+      const dist = path.join(REPO_ROOT, 'client', 'dist');
+      expect(
+        existsSync(dist),
+        'client/dist must exist — run `npm run build -w client` before the suite',
+      ).toBe(true);
 
-    const output = execFileSync(
-      process.execPath,
-      [path.join('scripts', 'check-bundle-leaks.mjs')],
-      { cwd: REPO_ROOT, encoding: 'utf8' },
-    );
-    // A pass with zero canaries would prove nothing, so the count is checked.
-    const canaries = /OK \((\d+) canaries, (\d+) files/.exec(output);
-    expect(output, 'the bundle leak checker').toContain('check-bundle-leaks: OK');
-    expect(canaries, 'the checker must report how much it checked').not.toBeNull();
-    expect(Number(canaries?.[1] ?? 0), 'canaries in the fixture').toBeGreaterThan(0);
-    expect(Number(canaries?.[2] ?? 0), 'files scanned in client/dist').toBeGreaterThan(0);
-  });
+      const output = execFileSync(
+        process.execPath,
+        [path.join('scripts', 'check-bundle-leaks.mjs')],
+        { cwd: REPO_ROOT, encoding: 'utf8' },
+      );
+      // A pass with zero canaries would prove nothing, so the count is checked.
+      const canaries = /OK \((\d+) canaries, (\d+) files/.exec(output);
+      expect(output, 'the bundle leak checker').toContain('check-bundle-leaks: OK');
+      expect(canaries, 'the checker must report how much it checked').not.toBeNull();
+      expect(Number(canaries?.[1] ?? 0), 'canaries in the fixture').toBeGreaterThan(0);
+      expect(Number(canaries?.[2] ?? 0), 'files scanned in client/dist').toBeGreaterThan(0);
+    },
+  );
 });
 
 test.describe('media', () => {
@@ -125,7 +133,7 @@ test.describe('media', () => {
     browser,
   }) => {
     await staff.reset('CS');
-    const fixture = prepared().fixture;
+    const fixture = requireFixture();
     const locked = await playableRecordings('cscalls');
     expect(locked.length).toBeGreaterThan(0);
 
@@ -160,29 +168,33 @@ test.describe('media', () => {
 });
 
 test.describe('the public certificate check', () => {
-  test('says the same thing about everything that is not a certificate', async ({ browser }) => {
-    const anyone = await browser.newContext();
-    try {
-      const ids = [
-        'AAAAAAAAAAAAAAAAAAAAAA', // well formed, never issued
-        'short',
-        '../../etc/passwd',
-        'x'.repeat(200),
-      ];
-      const bodies: string[] = [];
-      for (const id of ids) {
-        const response = await anyone.request.get(`/api/cert/${encodeURIComponent(id)}/verify`, {
-          failOnStatusCode: false,
-        });
-        expect(response.status(), `GET /api/cert/${id}/verify`).toBe(200);
-        bodies.push(await response.text());
+  test(
+    'says the same thing about everything that is not a certificate',
+    { tag: CONTENT_FREE_TAG },
+    async ({ browser }) => {
+      const anyone = await browser.newContext();
+      try {
+        const ids = [
+          'AAAAAAAAAAAAAAAAAAAAAA', // well formed, never issued
+          'short',
+          '../../etc/passwd',
+          'x'.repeat(200),
+        ];
+        const bodies: string[] = [];
+        for (const id of ids) {
+          const response = await anyone.request.get(`/api/cert/${encodeURIComponent(id)}/verify`, {
+            failOnStatusCode: false,
+          });
+          expect(response.status(), `GET /api/cert/${id}/verify`).toBe(200);
+          bodies.push(await response.text());
+        }
+        for (const body of bodies) {
+          expect(JSON.parse(body)).toEqual({ valid: false });
+        }
+        expect(new Set(bodies).size, 'every non-certificate gets the same answer').toBe(1);
+      } finally {
+        await anyone.close();
       }
-      for (const body of bodies) {
-        expect(JSON.parse(body)).toEqual({ valid: false });
-      }
-      expect(new Set(bodies).size, 'every non-certificate gets the same answer').toBe(1);
-    } finally {
-      await anyone.close();
-    }
-  });
+    },
+  );
 });

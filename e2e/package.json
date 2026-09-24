@@ -6,6 +6,7 @@
   "description": "Playwright end-to-end suite (S10). Runs against the local app. Synthetic accounts only.",
   "scripts": {
     "test:e2e": "playwright test",
+    "test:e2e:content-free": "playwright test --grep @content-free",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
     "e2e:prepare": "tsx ../ops/dev/e2e-prepare.ts --expect-db academy_dev",

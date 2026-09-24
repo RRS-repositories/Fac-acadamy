@@ -14,6 +14,10 @@ export default tseslint.config(
       '**/coverage/**',
       '**/playwright-report/**',
       '**/test-results/**',
+      // Vite's dependency cache. Gitignored, prebundled third-party code, and
+      // written whenever the dev server runs — linting it fails `npx eslint .`
+      // on a developer's machine for code nobody in this repo wrote.
+      '**/.vite/**',
     ],
   },
   js.configs.recommended,
