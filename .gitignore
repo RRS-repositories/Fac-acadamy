@@ -48,3 +48,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 *.log
+
+# Vite dependency cache (created when the dev server runs outside node_modules)
+.vite/
