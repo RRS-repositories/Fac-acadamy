@@ -35,9 +35,31 @@ const TRACK = {
   ],
 };
 
+// The management area (S07) once a manager lands on it. Its own screen tests
+// live in Manager.test.jsx, so an empty roster is enough here.
+const MANAGER_AREA = {
+  'GET /api/manager/roster?includeDisabled=true': [
+    200,
+    {
+      trainees: [],
+      counts: { total: 0, active: 0, disabled: 0, onlineNow: 0, waitingForTrack: 0 },
+    },
+  ],
+  'GET /api/manager/stuck': [200, { trainees: [] }],
+  'GET /api/manager/config': [
+    200,
+    { stage1AuthRequired: true, academyV2: true, provisioning: false },
+  ],
+};
+
 async function openLogin(path = '/login') {
-  renderApp(path);
+  const rendered = renderApp(path);
   await screen.findByRole('heading', { name: 'Sign in to start training' });
+  return rendered;
+}
+
+function tab(name) {
+  return screen.getByRole('tab', { name });
 }
 
 function signIn(email = 'trainee.a@example.com', password = 'any-password') {
@@ -53,16 +75,77 @@ async function enterCode(button, code = '123456') {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  window.localStorage.clear();
 });
 
 describe('Login', () => {
-  it('shows the brand panel, no staff/manager tabs, no passcode, no mock picker', async () => {
+  it('shows the brand panel, no passcode field and no mock picker', async () => {
     mockFetch();
     await openLogin();
     expect(screen.getByRole('heading', { name: /started at stage/i })).toBeInTheDocument();
     expect(screen.queryByText(/passcode/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/passcode/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/mock/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /manager/i })).not.toBeInTheDocument();
+
+    // The card's only password field is the account password.
+    const passwordInputs = document.querySelectorAll('input[type="password"]');
+    expect(passwordInputs).toHaveLength(1);
+    expect(passwordInputs[0]).toBe(screen.getByLabelText('Password'));
+
+    // Choosing Manager must never turn into a second secret to type.
+    fireEvent.click(tab('Manager'));
+    expect(screen.queryByText(/passcode/i)).not.toBeInTheDocument();
+    expect(document.querySelectorAll('input[type="password"]')).toHaveLength(1);
+  });
+
+  it('shows the prototype tabs, staff first, and swaps the heading and subtitle', async () => {
+    mockFetch();
+    await openLogin();
+
+    const staffTab = tab(/staff member/i);
+    const managerTab = tab('Manager');
+    expect(staffTab).toHaveTextContent(/👤\s*Staff member/);
+    expect(managerTab).toHaveTextContent(/🛡\s*Manager/);
+    expect(staffTab).toHaveAttribute('aria-selected', 'true');
+    expect(managerTab).toHaveAttribute('aria-selected', 'false');
+    expect(
+      screen.getByText(
+        'Use your CRM email and password. IT sets your account up before your first day.',
+      ),
+    ).toBeInTheDocument();
+
+    // What has already been typed survives the switch.
+    fireEvent.change(screen.getByLabelText('Work email'), {
+      target: { value: 'manager.b@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'half-typed' } });
+
+    fireEvent.click(managerTab);
+    expect(screen.getByRole('heading', { name: 'Manager sign in' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Management access: live trainee view, scores, authorisation and account control.',
+      ),
+    ).toBeInTheDocument();
+    expect(tab('Manager')).toHaveAttribute('aria-selected', 'true');
+    expect(tab(/staff member/i)).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByLabelText('Work email')).toHaveValue('manager.b@example.com');
+    expect(screen.getByLabelText('Password')).toHaveValue('half-typed');
+
+    fireEvent.click(tab(/staff member/i));
+    expect(screen.getByRole('heading', { name: 'Sign in to start training' })).toBeInTheDocument();
+  });
+
+  it('remembers the tab on this device and defaults to staff', async () => {
+    mockFetch();
+    const first = await openLogin();
+    expect(tab(/staff member/i)).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(tab('Manager'));
+    first.unmount();
+
+    renderApp('/login');
+    expect(await screen.findByRole('heading', { name: 'Manager sign in' })).toBeInTheDocument();
+    expect(tab('Manager')).toHaveAttribute('aria-selected', 'true');
   });
 
   it('asks for email and password before calling sign-in', async () => {
@@ -110,26 +193,93 @@ describe('Login', () => {
     mockFetch({
       'POST /api/auth/login': [200, { next: 'challenge' }],
       'POST /api/auth/mfa': [200, { me: MANAGER }],
-      // The manager lands on the roster (S07); its own screen tests live in
-      // Manager.test.jsx, so an empty roster is enough here.
-      'GET /api/manager/roster?includeDisabled=true': [
-        200,
-        {
-          trainees: [],
-          counts: { total: 0, active: 0, disabled: 0, onlineNow: 0, waitingForTrack: 0 },
-        },
-      ],
-      'GET /api/manager/stuck': [200, { trainees: [] }],
-      'GET /api/manager/config': [
-        200,
-        { stage1AuthRequired: true, academyV2: true, provisioning: false },
-      ],
+      ...MANAGER_AREA,
     });
     await openLogin('/login?next=%2Fmanager');
     signIn('manager.b@example.com');
     await screen.findByRole('heading', { name: 'Enter your authenticator code' });
     await enterCode('Verify and sign in');
     expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
+  });
+
+  it('manager tab + a manager account lands on the roster', async () => {
+    mockFetch({
+      'POST /api/auth/login': [200, { next: 'challenge' }],
+      'POST /api/auth/mfa': [200, { me: MANAGER }],
+      ...MANAGER_AREA,
+    });
+    await openLogin();
+    fireEvent.click(tab('Manager'));
+    signIn('manager.b@example.com');
+    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
+    await enterCode('Verify and sign in');
+    expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
+  });
+
+  it('staff tab + a manager account lands on training, with the Management link', async () => {
+    mockFetch({
+      ...TRACK,
+      'POST /api/auth/login': [200, { next: 'challenge' }],
+      'POST /api/auth/mfa': [200, { me: MANAGER }],
+    });
+    await openLogin();
+    signIn('manager.b@example.com');
+    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
+    await enterCode('Verify and sign in');
+    expect(
+      await screen.findByRole('heading', { name: /welcome back, manager/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Management' })).toHaveAttribute('href', '/manager');
+  });
+
+  it('manager tab + a staff account lands on training with one calm line and no manager UI', async () => {
+    const fetchMock = mockFetch({
+      ...TRACK,
+      'POST /api/auth/login': [200, { next: 'challenge' }],
+      'POST /api/auth/mfa': [200, { me: STAFF }],
+    });
+    await openLogin();
+    fireEvent.click(tab('Manager'));
+    signIn();
+    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
+
+    // The tab changes nothing about the request itself.
+    const [[, loginInit]] = callsTo(fetchMock, 'POST', '/api/auth/login');
+    expect(JSON.parse(loginInit.body)).toEqual({
+      email: 'trainee.a@example.com',
+      password: 'any-password',
+    });
+
+    await enterCode('Verify and sign in');
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "You're signed in. This account doesn't have management access, so here is your training.",
+    );
+    expect(screen.queryByRole('link', { name: 'Management' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Trainee roster' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([path]) => String(path).startsWith('/api/manager'))).toBe(
+      false,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
+  it('an explicit ?next= beats the manager tab', async () => {
+    mockFetch({
+      'POST /api/auth/login': [200, { next: 'challenge' }],
+      'POST /api/auth/mfa': [200, { me: MANAGER }],
+      ...MANAGER_AREA,
+    });
+    await openLogin('/login?next=%2Fstatus-guide');
+    fireEvent.click(tab('Manager'));
+    signIn('manager.b@example.com');
+    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
+    await enterCode('Verify and sign in');
+    expect(await screen.findByRole('heading', { name: /status guide/i })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Trainee roster' })).not.toBeInTheDocument();
   });
 
   it('ignores a ?next= that points off-site', async () => {

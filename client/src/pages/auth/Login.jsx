@@ -1,15 +1,43 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import BrandPanel from '../../components/auth/BrandPanel.jsx';
+import { NO_MANAGER_ACCESS } from '../../components/auth/ManagerAccessNotice.jsx';
+import SignInTabs, {
+  MANAGER_TAB,
+  readRememberedTab,
+  rememberTab,
+  STAFF_TAB,
+  tabButtonId,
+} from '../../components/auth/SignInTabs.jsx';
 import { ApiError, login, verifyMfa } from '../../api/client.js';
 import { useAuth } from '../../auth/AuthProvider.jsx';
 import { safeNext } from '../../auth/safeNext.js';
 
 // Sign-in screen. Production flow (D11, approve first): the starter's CRM
 // account already exists, so they sign in with CRM email + password, then an
-// authenticator code. First sign-in sets the authenticator up. There is no
-// staff/manager tab and no passcode: the role comes from the account.
+// authenticator code. First sign-in sets the authenticator up.
+//
+// The prototype's two tabs are back, but only as a statement of intent: they
+// change the card's wording and where the user lands afterwards. The role
+// comes from the CRM account, the server decides it, and there is no passcode
+// field. The request body and the authenticator step are the same either way.
 // API: POST /api/auth/login, then POST /api/auth/mfa (shared/contracts/auth).
+
+// Copy per tab. The staff heading is the prototype's; the staff subtitle is
+// ours, because under D11 IT creates the CRM account before day one — the
+// prototype's "details your manager gave you" describes the old flow.
+const TAB_COPY = {
+  [STAFF_TAB]: {
+    heading: 'Sign in to start training',
+    subtitle: 'Use your CRM email and password. IT sets your account up before your first day.',
+    note: 'Managers use this same sign-in. The management area opens automatically for manager accounts.',
+  },
+  [MANAGER_TAB]: {
+    heading: 'Manager sign in',
+    subtitle: 'Management access: live trainee view, scores, authorisation and account control.',
+    note: 'Same email and password as always. Management access comes from your CRM account, not from this choice.',
+  },
+};
 
 const ERROR_TEXT = {
   invalid_credentials:
@@ -44,8 +72,14 @@ const linkButtonClass =
 export default function Login() {
   const { me, status, setMe } = useAuth();
   const [searchParams] = useSearchParams();
-  const next = safeNext(searchParams.get('next'));
+  const rawNext = searchParams.get('next');
+  const next = safeNext(rawNext);
+  // A ?next= the user was actually sent here with wins over the tab choice.
+  // One that safeNext rejected (off-site, or back to /login) does not count.
+  const nextIsExplicit = typeof rawNext === 'string' && rawNext.length > 0 && next === rawNext;
 
+  const [tab, setTab] = useState(readRememberedTab);
+  const [landing, setLanding] = useState(null);
   const [step, setStep] = useState('credentials'); // credentials | challenge | enrol
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -56,12 +90,32 @@ export default function Login() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [busy, setBusy] = useState(false);
   const headingRef = useRef(null);
+  const panelId = useId();
+  const copy = TAB_COPY[tab];
 
   // Move focus to the new heading when the step changes, so screen readers
   // announce it (the page itself doesn't navigate).
   useEffect(() => {
     if (step !== 'credentials') headingRef.current?.focus();
   }, [step]);
+
+  function chooseTab(nextTab) {
+    setTab(nextTab);
+    rememberTab(nextTab);
+    // Whatever is already typed stays typed: only the wording changes.
+  }
+
+  // Where a successful sign-in lands. The tab is intent only — a staff account
+  // that chose Manager still goes to its training, with one calm line saying
+  // this account has no management access.
+  function landingFor(user) {
+    if (nextIsExplicit) return { to: next, noManagerAccess: false };
+    if (tab === MANAGER_TAB) {
+      if (user.role === 'MANAGER') return { to: '/manager', noManagerAccess: false };
+      return { to: '/', noManagerAccess: true };
+    }
+    return { to: '/', noManagerAccess: false };
+  }
 
   async function submitCredentials(event) {
     event.preventDefault();
@@ -115,7 +169,8 @@ export default function Login() {
     } finally {
       setBusy(false);
     }
-    // Signed in: the redirect below takes them to `next`.
+    // Signed in: the redirect below takes them where they belong.
+    setLanding(landingFor(signedInUser));
     setMe(signedInUser);
   }
 
@@ -129,7 +184,15 @@ export default function Login() {
   }
 
   // Already signed in (or just finished signing in): go where they were headed.
-  if (me) return <Navigate to={next} replace />;
+  if (me) {
+    return (
+      <Navigate
+        to={landing?.to ?? next}
+        replace
+        state={landing?.noManagerAccess ? { managerAccess: NO_MANAGER_ACCESS } : null}
+      />
+    );
+  }
   // Still checking for an existing session: avoid flashing the form.
   if (status === 'loading') return null;
 
@@ -140,67 +203,73 @@ export default function Login() {
       <main className="flex flex-1 items-center justify-center px-5 py-10 sm:p-10">
         <div className="w-full max-w-[420px]">
           {step === 'credentials' && (
-            <form onSubmit={submitCredentials} noValidate>
-              <h2 className="mb-1.5 text-[26px] font-bold">Sign in to start training</h2>
-              <p className="mb-6 text-sm text-muted">
-                Use your CRM email and password. IT sets your account up before your first day.
-              </p>
+            <>
+              <SignInTabs value={tab} onChange={chooseTab} panelId={panelId} />
+              <form
+                id={panelId}
+                role="tabpanel"
+                aria-labelledby={tabButtonId(tab)}
+                onSubmit={submitCredentials}
+                noValidate
+              >
+                <div aria-live="polite">
+                  <h2 className="mb-1.5 text-[26px] font-bold">{copy.heading}</h2>
+                  <p className="mb-6 text-sm text-muted">{copy.subtitle}</p>
+                </div>
 
-              <ErrorAlert error={error} />
+                <ErrorAlert error={error} />
 
-              <Field
-                label="Work email"
-                error={fieldErrors.email}
-                input={(props) => (
-                  <input
-                    {...props}
-                    type="email"
-                    autoComplete="username"
-                    placeholder="you@rowanrose.co.uk"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                )}
-              />
-
-              <Field
-                label="Password"
-                error={fieldErrors.password}
-                input={(props) => (
-                  <div className="relative">
+                <Field
+                  label="Work email"
+                  error={fieldErrors.email}
+                  input={(props) => (
                     <input
                       {...props}
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="current-password"
-                      className={`${props.className} pr-16`}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      type="email"
+                      autoComplete="username"
+                      placeholder="you@rowanrose.co.uk"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      aria-pressed={showPassword}
-                      className="absolute inset-y-0 right-0 px-4 text-[13px] font-semibold text-navy"
-                    >
-                      {showPassword ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                )}
-              />
+                  )}
+                />
 
-              <button type="submit" className={`${primaryButtonClass} mt-2`} disabled={busy}>
-                {busy ? 'Signing in…' : 'Sign in'}
-              </button>
+                <Field
+                  label="Password"
+                  error={fieldErrors.password}
+                  input={(props) => (
+                    <div className="relative">
+                      <input
+                        {...props}
+                        type={showPassword ? 'text' : 'password'}
+                        autoComplete="current-password"
+                        className={`${props.className} pr-16`}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-pressed={showPassword}
+                        className="absolute inset-y-0 right-0 px-4 text-[13px] font-semibold text-navy"
+                      >
+                        {showPassword ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                  )}
+                />
 
-              <p className="mt-4 text-center text-sm text-muted">
-                Forgotten your password? Reset it in the CRM, or ask IT.
-              </p>
+                <button type="submit" className={`${primaryButtonClass} mt-2`} disabled={busy}>
+                  {busy ? 'Signing in…' : 'Sign in'}
+                </button>
 
-              <Note>
-                Managers use this same sign-in. The management area opens automatically for manager
-                accounts.
-              </Note>
-            </form>
+                <p className="mt-4 text-center text-sm text-muted">
+                  Forgotten your password? Reset it in the CRM, or ask IT.
+                </p>
+
+                <Note>{copy.note}</Note>
+              </form>
+            </>
           )}
 
           {step === 'challenge' && (

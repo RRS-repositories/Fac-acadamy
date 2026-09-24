@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import AuthStatusScreen from '../components/AuthStatusScreen.jsx';
+import ManagerAccessNotice from '../components/auth/ManagerAccessNotice.jsx';
 import WaitingForTrack from '../pages/WaitingForTrack.jsx';
 import { useAuth } from './AuthProvider.jsx';
 
@@ -34,5 +35,12 @@ export default function RequireAuth({ children, requireTrack = true }) {
   if (requireTrack && me.track === null) {
     return <WaitingForTrack />;
   }
-  return children;
+  // The notice only appears when the sign-in page flagged this landing; the
+  // live region itself is always mounted so it gets announced.
+  return (
+    <>
+      {children}
+      <ManagerAccessNotice />
+    </>
+  );
 }
