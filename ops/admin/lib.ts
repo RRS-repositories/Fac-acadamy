@@ -12,6 +12,7 @@ import pg from 'pg';
 import { loadDotenvIfPresent } from '../../server/src/config/dotenv.js';
 import { DbSettingsSchema, pgConfig } from '../../server/src/db/connection.js';
 import type { AuditEventType } from '../../server/src/modules/audit/audit.js';
+import { isProductionDbName, productionReason } from '../lib/production-db.js';
 
 export class AdminError extends Error {
   override name = 'AdminError';
@@ -51,9 +52,31 @@ export function parseEmail(raw: string | undefined): string {
   return email;
 }
 
-export function parseExpectDb(raw: string | undefined): string {
+/**
+ * The wrong-database guard for the IT admin commands.
+ *
+ * Unlike the media and backup scripts, these ARE production tools — resetting a
+ * lost authenticator on the live system is the whole reason they exist (D14).
+ * So a production name is not refused; it is made deliberate. Naming the live
+ * database twice, in two different flags, is not something anyone does by
+ * accident:
+ *
+ *   npx tsx ops/admin/reset-mfa.ts --email … --by … \
+ *     --expect-db client_credentials --confirm-production
+ *
+ * 'client_credentials' is the CRM's own database, which the academy shares.
+ * See ops/lib/production-db.ts.
+ */
+export function parseExpectDb(raw: string | undefined, confirmProduction = false): string {
   const db = raw?.trim() ?? '';
   if (!db) throw new AdminError('--expect-db <database name> is required (wrong-database guard).');
+  if (isProductionDbName(db) && !confirmProduction) {
+    throw new AdminError(
+      `Refusing to run against "${db}" without --confirm-production: ${productionReason(db)}.\n` +
+        'These commands are meant to be used there — this is a second pair of eyes, not a ban.\n' +
+        'Add --confirm-production when you mean it, and consider --dry-run first.',
+    );
+  }
   return db;
 }
 

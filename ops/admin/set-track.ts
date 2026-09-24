@@ -10,7 +10,7 @@
 // track.
 //
 //   npx tsx ops/admin/set-track.ts --email <email> --track <CODE> --by <operator name> \
-//       --expect-db <database name> [--dry-run]
+//       --expect-db <database name> [--confirm-production] [--dry-run]
 //   npx tsx ops/admin/set-track.ts --email <email> --clear --by <operator name> \
 //       --expect-db <database name>            (--track none does the same)
 //   (or from ops/: npm run admin:set-track -- --email ... )
@@ -31,7 +31,7 @@ import {
 
 export const SET_TRACK_USAGE =
   'Usage: set-track --email <email> (--track <CODE> | --clear) --by <operator name> ' +
-  '--expect-db <database name> [--dry-run]';
+  '--expect-db <database name> [--confirm-production] [--dry-run]';
 
 export interface SetTrackArgs {
   email: string;
@@ -73,6 +73,8 @@ export function parseSetTrackArgs(argv: string[]): SetTrackArgs | 'help' {
       clear: { type: 'boolean', default: false },
       by: { type: 'string' },
       'expect-db': { type: 'string' },
+      'confirm-production': { type: 'boolean', default: false },
+
       'dry-run': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -86,7 +88,7 @@ export function parseSetTrackArgs(argv: string[]): SetTrackArgs | 'help' {
     email: parseEmail(values.email),
     track: clear ? null : parseTrackCode(values.track),
     operator: parseOperator(values.by),
-    expectDb: parseExpectDb(values['expect-db']),
+    expectDb: parseExpectDb(values['expect-db'], values['confirm-production'] === true),
     dryRun: values['dry-run'] === true,
   };
 }

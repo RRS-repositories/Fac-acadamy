@@ -22,6 +22,7 @@ import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseBuffer, parseFile } from 'music-metadata';
+import { isProductionDbName, productionReason } from '../lib/production-db.js';
 
 export class MediaError extends Error {
   override name = 'MediaError';
@@ -145,12 +146,14 @@ export function resolveMediaRoot(env: NodeJS.ProcessEnv = process.env): string {
 // Database guards
 // ---------------------------------------------------------------------------
 
-const PRODUCTION_HINTS = ['prod', 'live'];
-
-/** True when a database name looks like production and must never be touched. */
+/**
+ * True when a database name is production and must never be touched by these
+ * scripts. The rule lives in ops/lib/production-db.ts, which knows the CRM's
+ * database by name — 'client_credentials' contains neither 'prod' nor 'live'
+ * and used to sail straight through.
+ */
 export function looksLikeProduction(name: string): boolean {
-  const lower = name.trim().toLowerCase();
-  return PRODUCTION_HINTS.some((hint) => lower.includes(hint));
+  return isProductionDbName(name);
 }
 
 export function parseExpectDb(raw: string | undefined): string {
@@ -158,7 +161,7 @@ export function parseExpectDb(raw: string | undefined): string {
   if (!db) throw new MediaError('--expect-db <database name> is required (wrong-database guard).');
   if (looksLikeProduction(db)) {
     throw new MediaError(
-      `Refusing to run against "${db}": the name looks like production. These scripts run ` +
+      `Refusing to run against "${db}": ${productionReason(db)}. These scripts run ` +
         'against a local or staging database; on the production server the operator runs them ' +
         'himself, the way he applies the migrations.',
     );

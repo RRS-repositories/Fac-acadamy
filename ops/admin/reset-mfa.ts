@@ -4,7 +4,7 @@
 // row (MFA_RESET, actor 'ops:<operator>') in the same transaction.
 //
 //   npx tsx ops/admin/reset-mfa.ts --email <email> --by <operator name> \
-//       --expect-db <database name> [--reason "<text>"] [--dry-run]
+//       --expect-db <database name> [--reason "<text>"] [--confirm-production] [--dry-run]
 //   (or from ops/: npm run admin:reset-mfa -- --email ... )
 //
 // Prints the trainee id and email only. The encrypted secret is never read.
@@ -25,7 +25,7 @@ import {
 
 export const RESET_MFA_USAGE =
   'Usage: reset-mfa --email <email> --by <operator name> --expect-db <database name> ' +
-  '[--reason "<text>"] [--dry-run]';
+  '[--reason "<text>"] [--confirm-production] [--dry-run]';
 
 export interface ResetMfaArgs {
   email: string;
@@ -45,6 +45,8 @@ export function parseResetMfaArgs(argv: string[]): ResetMfaArgs | 'help' {
       by: { type: 'string' },
       reason: { type: 'string' },
       'expect-db': { type: 'string' },
+      'confirm-production': { type: 'boolean', default: false },
+
       'dry-run': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -54,7 +56,7 @@ export function parseResetMfaArgs(argv: string[]): ResetMfaArgs | 'help' {
     email: parseEmail(values.email),
     operator: parseOperator(values.by),
     reason: parseReason(values.reason, false),
-    expectDb: parseExpectDb(values['expect-db']),
+    expectDb: parseExpectDb(values['expect-db'], values['confirm-production'] === true),
     dryRun: values['dry-run'] === true,
   };
 }

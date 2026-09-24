@@ -23,6 +23,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isProductionDbName } from '../lib/production-db.js';
 
 export class BackupError extends Error {
   override name = 'BackupError';
@@ -117,16 +118,20 @@ export const MEDIA_RELATIVE = 'media';
 // Database name guards
 // ---------------------------------------------------------------------------
 
-const PRODUCTION_HINTS = ['prod', 'live'];
 /** A name that says, on its face, "nothing of value lives here". */
 const THROWAWAY_HINTS = ['drill', 'restore', 'scratch', 'throwaway', 'sandbox'];
 
 /** Postgres identifiers we are willing to interpolate into DDL, and nothing else. */
 const DB_NAME_PATTERN = /^[a-z][a-z0-9_]{0,62}$/;
 
+/**
+ * True when a database name is production. The rule lives in
+ * ops/lib/production-db.ts, which knows the CRM's own database by name:
+ * 'client_credentials' contains neither 'prod' nor 'live', so a substring
+ * search alone would have let the restore drill drop a schema inside it.
+ */
 export function looksLikeProduction(name: string): boolean {
-  const lower = name.trim().toLowerCase();
-  return PRODUCTION_HINTS.some((hint) => lower.includes(hint));
+  return isProductionDbName(name);
 }
 
 export interface ThrowAwayOptions {

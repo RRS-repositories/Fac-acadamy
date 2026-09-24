@@ -5,7 +5,7 @@
 // same transaction. The new role takes effect at the person's next sign-in.
 //
 //   npx tsx ops/admin/set-role-override.ts --crm-user-id <id> --role STAFF|MANAGER|none \
-//       --by <operator name> --reason "<text>" --expect-db <database name> [--dry-run]
+//       --by <operator name> --reason "<text>" --expect-db <database name> [--confirm-production] [--dry-run]
 //   (or from ops/: npm run admin:set-role -- --crm-user-id ... )
 import { parseArgs } from 'node:util';
 import {
@@ -23,7 +23,7 @@ import {
 
 export const SET_ROLE_USAGE =
   'Usage: set-role-override --crm-user-id <id> --role STAFF|MANAGER|none --by <operator name> ' +
-  '--reason "<text>" --expect-db <database name> [--dry-run]';
+  '--reason "<text>" --expect-db <database name> [--confirm-production] [--dry-run]';
 
 export type OverrideRole = 'STAFF' | 'MANAGER' | null;
 
@@ -64,6 +64,8 @@ export function parseSetRoleArgs(argv: string[]): SetRoleArgs | 'help' {
       by: { type: 'string' },
       reason: { type: 'string' },
       'expect-db': { type: 'string' },
+      'confirm-production': { type: 'boolean', default: false },
+
       'dry-run': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -74,7 +76,7 @@ export function parseSetRoleArgs(argv: string[]): SetRoleArgs | 'help' {
     role: parseOverrideRole(values.role),
     operator: parseOperator(values.by),
     reason: parseReason(values.reason, true)!,
-    expectDb: parseExpectDb(values['expect-db']),
+    expectDb: parseExpectDb(values['expect-db'], values['confirm-production'] === true),
     dryRun: values['dry-run'] === true,
   };
 }
