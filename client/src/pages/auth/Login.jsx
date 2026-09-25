@@ -105,16 +105,18 @@ export default function Login() {
     // Whatever is already typed stays typed: only the wording changes.
   }
 
-  // Where a successful sign-in lands. The tab is intent only — a staff account
-  // that chose Manager still goes to its training, with one calm line saying
-  // this account has no management access.
+  // Where a successful sign-in lands. The ACCOUNT decides this, never the tab:
+  // a manager lands on the manager dashboard and everyone else on their
+  // training, whichever tab they happened to pick. The tab only chooses the
+  // card's wording, and — when a staff account picked Manager — the one calm
+  // line saying this account has no management access.
+  //
+  // A manager who wants their own training uses the sidebar; the dashboard is
+  // what they open the academy for.
   function landingFor(user) {
     if (nextIsExplicit) return { to: next, noManagerAccess: false };
-    if (tab === MANAGER_TAB) {
-      if (user.role === 'MANAGER') return { to: '/manager', noManagerAccess: false };
-      return { to: '/', noManagerAccess: true };
-    }
-    return { to: '/', noManagerAccess: false };
+    if (user.role === 'MANAGER') return { to: '/manager', noManagerAccess: false };
+    return { to: '/', noManagerAccess: tab === MANAGER_TAB };
   }
 
   async function submitCredentials(event) {
