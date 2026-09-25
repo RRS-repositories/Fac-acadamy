@@ -649,6 +649,189 @@ describe.skipIf(database === null)('S07 manager API (test DB)', () => {
     });
   });
 
+  // ---- What the trainee did BEFORE their current track --------------------
+
+  describe('earlier history on the trainee page', () => {
+    /** The detail response for one trainee, as a manager sees it. */
+    async function detailOf(h: Harness, mgr: SignedIn, traineeId: number): Promise<TraineeDetail> {
+      const res = await get(h, `/api/manager/trainee/${traineeId}`, mgr.cookie);
+      expect(res.status).toBe(200);
+      return res.body as TraineeDetail;
+    }
+
+    /**
+     * Programme names are read out of the database, never typed into this repo:
+     * academy.levels.name and academy.departments.label are seeded wording.
+     */
+    async function nameOf(kind: 'LEVEL' | 'DEPT', ref: string): Promise<string> {
+      const { rows } =
+        kind === 'LEVEL'
+          ? await db.pool.query<{ name: string }>(
+              'SELECT name FROM academy.levels WHERE level_number = $1',
+              [Number(ref)],
+            )
+          : await db.pool.query<{ name: string }>(
+              'SELECT label AS name FROM academy.departments WHERE code = $1',
+              [ref],
+            );
+      const name = rows[0]?.name;
+      if (name === undefined) throw new Error(`no ${kind} named ${ref} in the database`);
+      return name;
+    }
+
+    /** academy.tracks.label, for the same reason. */
+    async function trackLabelOf(code: string): Promise<string> {
+      const { rows } = await db.pool.query<{ label: string }>(
+        'SELECT label FROM academy.tracks WHERE code = $1',
+        [code],
+      );
+      return rows[0]!.label;
+    }
+
+    it('is empty for somebody who has only ever been on one programme', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const never = await staff(h);
+      const once = await staff(h);
+      await assignTrack(h, mgr, once.me.id, 'CS');
+
+      // No track ever assigned: nothing recorded, nothing completed.
+      expect((await detailOf(h, mgr, never.me.id)).history).toEqual({
+        completedProgrammes: [],
+        previousTracks: [],
+      });
+      // One assignment is the CURRENT track, not a previous one — the section
+      // above it already says where they are.
+      expect((await detailOf(h, mgr, once.me.id)).history).toEqual({
+        completedProgrammes: [],
+        previousTracks: [],
+      });
+    });
+
+    it('shows a completed department academy and level, named by the database', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+      const other = await staff(h);
+      await assignTrack(h, mgr, who.me.id, 'MGMT');
+
+      // The completion rows are written with SQL: what is under test is the
+      // history query, not the grader that would normally create them.
+      await db.pool.query(
+        `INSERT INTO academy.dept_completions (trainee_id, dept, completed_at, certificate_ref)
+         VALUES ($1, 'IT', now() - INTERVAL '10 days', 'cert-ref-for-the-test')`,
+        [who.me.id],
+      );
+      await db.pool.query(
+        `INSERT INTO academy.level_completions (trainee_id, level_id, completed_at)
+         SELECT $1, l.id, now() - INTERVAL '20 days'
+           FROM academy.levels l WHERE l.level_number = 1`,
+        [who.me.id],
+      );
+
+      const history = (await detailOf(h, mgr, who.me.id)).history;
+      // Newest first, each named as the database words it.
+      expect(history.completedProgrammes).toEqual([
+        {
+          kind: 'DEPT',
+          ref: 'IT',
+          name: await nameOf('DEPT', 'IT'),
+          completedAt: expect.any(String),
+          hasCertificate: true,
+        },
+        {
+          kind: 'LEVEL',
+          ref: '1',
+          name: await nameOf('LEVEL', '1'),
+          completedAt: expect.any(String),
+          hasCertificate: false,
+        },
+      ]);
+      // The certificate is a yes/no. Its reference is the public id, which is a
+      // bearer token for the verify endpoint, so it never travels with a roster.
+      expect(JSON.stringify(history)).not.toContain('cert-ref-for-the-test');
+
+      // Nobody else picks it up.
+      expect((await detailOf(h, mgr, other.me.id)).history.completedProgrammes).toEqual([]);
+    });
+
+    it('shows a previously-held track with how far they got on it', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+
+      await assignTrack(h, mgr, who.me.id, 'IT');
+      // A real pass needs real stages, which only a seeded database has. The
+      // rest of the case — which track, when, and how the counts relate — is
+      // true either way.
+      if (seeded) await passStage(h, who, expectedFor('IT')[0]!);
+      await assignTrack(h, mgr, who.me.id, 'MGMT');
+
+      const detail = await detailOf(h, mgr, who.me.id);
+      expect(detail.trainee.track).toBe('MGMT');
+      // The current track is NOT in the history; the one they left is.
+      expect(detail.history.previousTracks.map((t) => t.trackCode)).toEqual(['IT']);
+
+      const held = detail.history.previousTracks[0]!;
+      expect(held.trackLabel).toBe(await trackLabelOf('IT'));
+      expect(held.heldFrom).not.toBeNull();
+      expect(new Date(held.heldUntil).getTime()).toBeGreaterThanOrEqual(
+        new Date(held.heldFrom!).getTime(),
+      );
+      expect(held.stagesPassed).toBeLessThanOrEqual(held.stagesTotal);
+      if (seeded) {
+        // "N of M": M is the IT track's own stage list, N what they passed of it.
+        expect(held.stagesTotal).toBe(expectedFor('IT').length);
+        expect(held.stagesPassed).toBe(1);
+      } else {
+        expect(held.stagesPassed).toBe(0);
+      }
+    });
+
+    it('lists several moves newest first, and counts a repeat once', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+
+      await assignTrack(h, mgr, who.me.id, 'IT');
+      await assignTrack(h, mgr, who.me.id, 'ADMIN');
+      // The API audits every PUT, including one that changes nothing. A repeat
+      // must not become a second spell on the same programme.
+      await assignTrack(h, mgr, who.me.id, 'ADMIN');
+      // Taking the track away is a gap with no track in it, not a programme.
+      await assignTrack(h, mgr, who.me.id, null);
+      await assignTrack(h, mgr, who.me.id, 'PAY');
+
+      const history = (await detailOf(h, mgr, who.me.id)).history;
+      expect(history.previousTracks.map((t) => t.trackCode)).toEqual(['ADMIN', 'IT']);
+      for (const held of history.previousTracks) {
+        expect(held.heldUntil).not.toBe('');
+        expect(held.stagesPassed).toBe(0);
+      }
+      // ...and the one they are on now is still only in the section above.
+      expect(history.previousTracks.map((t) => t.trackCode)).not.toContain('PAY');
+    });
+
+    it('carries no lesson text, no question and no answer', async () => {
+      const h = setup();
+      const mgr = await manager(h);
+      const who = await staff(h);
+
+      await assignTrack(h, mgr, who.me.id, 'IT');
+      if (seeded) await passStage(h, who, expectedFor('IT')[0]!);
+      await assignTrack(h, mgr, who.me.id, 'MGMT');
+      await db.pool.query(
+        `INSERT INTO academy.dept_completions (trainee_id, dept) VALUES ($1, 'IT')`,
+        [who.me.id],
+      );
+
+      const raw = JSON.stringify(await detailOf(h, mgr, who.me.id));
+      expect(raw).not.toContain('correct');
+      expect(raw).not.toContain('bodyHtml');
+      expect(raw).not.toMatch(/<\/?(p|div|ul|ol|li|h[1-6])[\s>]/i);
+    });
+  });
+
   // ---- Checklist: the CSV export -----------------------------------------
 
   describe('the CSV export', () => {

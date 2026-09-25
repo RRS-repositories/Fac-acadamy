@@ -142,10 +142,77 @@ export const TraineeStageSchema = z.object({
 });
 export type TraineeStage = z.infer<typeof TraineeStageSchema>;
 
+/**
+ * What a trainee finished: a LEVEL, or a DEPARTMENT ACADEMY. Those are the two
+ * things this system actually completes — a "track" is only the list of stages
+ * an account can see, so it is never completed, and moving somebody onto a new
+ * one leaves these rows exactly where they were.
+ *
+ * `name` is read from academy.levels / academy.departments at request time, the
+ * same rule the certificates follow: no programme wording is written into the
+ * repo. `ref` is the level number ('1') or the department code ('IT').
+ *
+ * The certificate is reported as a yes/no and nothing more. Its reference is
+ * the certificate's public id, and that id is a bearer token for the public
+ * verification endpoint — there is no reason for a roster screen to carry one.
+ */
+export const COMPLETED_PROGRAMME_KINDS = ['LEVEL', 'DEPT'] as const;
+export const CompletedProgrammeSchema = z.object({
+  kind: z.enum(COMPLETED_PROGRAMME_KINDS),
+  /** The level number as text, or the department code. */
+  ref: z.string(),
+  /** The programme's name, in the database's own words. */
+  name: z.string(),
+  /** ISO-8601. */
+  completedAt: z.string(),
+  hasCertificate: z.boolean(),
+});
+export type CompletedProgramme = z.infer<typeof CompletedProgrammeSchema>;
+
+/**
+ * A track the trainee used to be on, rebuilt from the TRACK_ASSIGNED and
+ * TRACK_CLEARED audit rows. Their CURRENT track is not in this list: the
+ * "Currently on" section above it already says where they are now.
+ *
+ * `stagesPassed` / `stagesTotal` are counted against that track's own stage
+ * list as it stands today, so they read "how far they got on that programme".
+ * `heldFrom` is null when the audit trail only shows them LEAVING the track —
+ * they were put on it before anything was being recorded, so the start date is
+ * genuinely unknown and is not guessed at.
+ */
+export const PreviousTrackSchema = z.object({
+  /** Not the TrackCode enum: an old audit row may name a track since retired. */
+  trackCode: z.string(),
+  /** The track's name from academy.tracks, never hardcoded here. */
+  trackLabel: z.string(),
+  /** ISO-8601, or null when the trail does not say when they joined it. */
+  heldFrom: z.string().nullable(),
+  /** ISO-8601: when they were moved off it. */
+  heldUntil: z.string(),
+  stagesPassed: z.number().int(),
+  stagesTotal: z.number().int(),
+});
+export type PreviousTrack = z.infer<typeof PreviousTrackSchema>;
+
+/**
+ * What this trainee did BEFORE their current track. Progress metadata only:
+ * names, dates and counts. Both lists are empty for somebody who has only ever
+ * been on one programme, and the screen then draws nothing at all.
+ */
+export const TraineeHistorySchema = z.object({
+  /** Newest first. */
+  completedProgrammes: z.array(CompletedProgrammeSchema),
+  /** Most recently left first. */
+  previousTracks: z.array(PreviousTrackSchema),
+});
+export type TraineeHistory = z.infer<typeof TraineeHistorySchema>;
+
 /** GET /api/manager/trainee/:id */
 export const TraineeDetailSchema = z.object({
   trainee: RosterTraineeSchema,
   stages: z.array(TraineeStageSchema),
+  /** Everything from before the current track (levels, departments, old tracks). */
+  history: TraineeHistorySchema,
 });
 export type TraineeDetail = z.infer<typeof TraineeDetailSchema>;
 

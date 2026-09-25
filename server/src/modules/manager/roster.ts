@@ -5,6 +5,7 @@ import type {
   RosterResponse,
   RosterStage,
   RosterTrainee,
+  TraineeHistory,
   TraineeStage,
   TraineeStatus,
 } from '@fac-academy/shared';
@@ -12,6 +13,7 @@ import { loadProgression, stageStates, visibleStages } from '../training/gate.js
 import { toTrackCode } from '../training/repo.js';
 import { toIso, toNumber } from './deps.js';
 import type { ManagerDeps } from './deps.js';
+import { loadTraineeHistory } from './history.js';
 
 // The manager roster (S07 task 1). Two queries for the whole list, however
 // long it is. The first reads the view academy.v_trainee_overview for
@@ -299,13 +301,15 @@ async function loadStageStats(
 export interface TraineeDetailResult {
   trainee: RosterTrainee;
   stages: TraineeStage[];
+  /** Levels and department academies finished, and tracks held before this one. */
+  history: TraineeHistory;
 }
 
 /**
- * The detail a manager opens from the roster: the trainee's own row plus the
- * state of every stage in their track. `state` comes from the one gate rule
- * (stageStates), so the manager sees exactly what the trainee sees.
- * Returns null when there is no such trainee.
+ * The detail a manager opens from the roster: the trainee's own row, the state
+ * of every stage in their track, and what they did before that track. `state`
+ * comes from the one gate rule (stageStates), so the manager sees exactly what
+ * the trainee sees. Returns null when there is no such trainee.
  */
 export async function loadTraineeDetail(
   deps: ManagerDeps,
@@ -319,11 +323,16 @@ export async function loadTraineeDetail(
   const visible = await visibleStages(db, traineeId);
   const progression = await loadProgression(db, traineeId, visible.stages, stage1AuthRequired);
   const states = stageStates(visible.stages, progression, stage1AuthRequired);
-  const stats = await loadStageStats(
-    db,
-    traineeId,
-    visible.stages.map((s) => s.id),
-  );
+  // The per-stage numbers and the history are independent of each other, so
+  // they go down the pool together rather than one after the other.
+  const [stats, history] = await Promise.all([
+    loadStageStats(
+      db,
+      traineeId,
+      visible.stages.map((s) => s.id),
+    ),
+    loadTraineeHistory(db, traineeId),
+  ]);
 
   const stages: TraineeStage[] = visible.stages.map((stage, i) => {
     const stat = stats.get(stage.id);
@@ -341,5 +350,5 @@ export async function loadTraineeDetail(
     };
   });
 
-  return { trainee, stages };
+  return { trainee, stages, history };
 }

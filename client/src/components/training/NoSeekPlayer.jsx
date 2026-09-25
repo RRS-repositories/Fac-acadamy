@@ -49,6 +49,55 @@ const MAX_PLAYBACK_STEP_SECS = 15;
 /** Stop the queue growing without bound if the server is unreachable for a while. */
 const MAX_PENDING = 180;
 
+/**
+ * The shortest stretch worth keeping hold of. The server stores coverage to the
+ * millisecond, so it answers with a rounded position and a sliver below that is
+ * noise, not a gap: keeping it would put a 0.0005-second interval in every
+ * beacon for the rest of the recording, and the jitter tolerance covers it many
+ * thousand times over.
+ */
+const MIN_OWED_SECS = 0.001;
+
+/**
+ * The parts of a batch the server has NOT counted yet.
+ *
+ * `acceptedTo` in the response is how far up the batch it got: it admits the
+ * intervals in ascending order and shortens the one that runs out of its
+ * wall-clock budget, so everything above that point is still owed. Keeping the
+ * remainder and sending it again is what stops a shortfall turning into a
+ * permanent hole — before this, the player restarted from what it had SENT,
+ * never learned that anything had been trimmed, and an honest listen could end
+ * up half credited with the quiz still locked.
+ *
+ * `null` means nothing in the batch was counted, so all of it is still owed.
+ * Touching stretches are joined so a long outage cannot fill the queue with
+ * slivers; only exact contact joins, so no unplayed second is ever bridged.
+ */
+function owedAbove(batch, acceptedTo) {
+  const floor = typeof acceptedTo === 'number' && Number.isFinite(acceptedTo) ? acceptedTo : null;
+  const owed = [];
+  for (const [from, to] of batch) {
+    if (floor === null) {
+      owed.push([from, to]);
+      continue;
+    }
+    const start = Math.max(from, floor);
+    if (to - start < MIN_OWED_SECS) continue;
+    owed.push([start, to]);
+  }
+  owed.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const joined = [];
+  for (const [from, to] of owed) {
+    const last = joined[joined.length - 1];
+    if (last !== undefined && from <= last[1]) {
+      if (to > last[1]) last[1] = to;
+    } else {
+      joined.push([from, to]);
+    }
+  }
+  return joined;
+}
+
 function fmt(secs) {
   if (!Number.isFinite(secs) || secs < 0) return '0:00';
   const m = Math.floor(secs / 60);
@@ -91,7 +140,13 @@ export default function NoSeekPlayer({ recording, stageCode }) {
   /**
    * Send everything played so far. The open stretch goes with it and is then
    * restarted from where playback is now, so nothing is counted twice and
-   * nothing is lost. A failure keeps the queue for the next attempt.
+   * nothing is lost.
+   *
+   * What the server counted is not always what was sent: it credits a beacon
+   * against the wall-clock time that has really passed, and shortens the
+   * interval that runs out of it. Whatever it did not count stays in the queue
+   * and goes again with the next beacon. A failed request keeps the whole batch
+   * the same way.
    */
   const flush = useCallback(async () => {
     if (sending.current) return;
@@ -104,7 +159,9 @@ export default function NoSeekPlayer({ recording, stageCode }) {
     const restartAt = open === null ? null : open[1];
     try {
       const result = await report(batch);
-      pending.current = [];
+      // The tail the server did not count goes back in the queue, so the open
+      // stretch can safely carry on from where playback is now.
+      pending.current = owedAbove(batch, result.acceptedTo).slice(-MAX_PENDING);
       if (segment.current !== null && restartAt !== null) {
         segment.current = [restartAt, Math.max(restartAt, segment.current[1])];
       }

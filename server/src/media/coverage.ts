@@ -18,22 +18,39 @@
 //   2. the media time credited was never larger than the wall-clock time that
 //      actually passed while it was being credited.
 //
-// (2) is what stops a skip. It is enforced one beacon at a time, in
-// `applyBeacon`: a beacon may add at most as many seconds of NEW coverage as
-// the number of seconds that have passed since the previous beacon (plus a
-// one-off allowance for the very first beacon, which arrives one beacon
-// interval after playback started). Because the budget of every beacon is the
-// real time since the last one, the total credited coverage can never exceed
-// the wall-clock time between the first and last beacon plus that one
-// allowance — which is exactly the "wall clock >= media time" rule, enforced
-// as it happens instead of only at the end. It is also strictly stronger: a
-// burst of fabricated beacons fails at the burst rather than at the finish.
+// (2) is what stops a skip, and it is enforced CUMULATIVELY: at any moment, the
+// total seconds credited for a recording may not exceed the wall-clock time
+// since that listen's first beacon, plus a one-off allowance for the first
+// beacon itself (which arrives one beacon interval after playback started).
+// `beaconBudgetSecs` is that statement rearranged — what is left of the
+// allowance once everything credited so far is deducted.
+//
+// It used to be charged one beacon at a time: a beacon could buy at most the
+// seconds since the PREVIOUS beacon, and anything left over was forfeited at
+// the beacon boundary. Against a cheat the two rules are the same — the sum of
+// the per-beacon gaps IS the time since the first beacon — but against an
+// honest listen they are not. A beacon that fires a few milliseconds early, a
+// request that takes a moment, a throttled tab: any of those make one beacon's
+// media advance a little more than the clock gap it is measured against, and
+// the excess was trimmed off the end and never credited again (the client
+// restarted from what it SENT, not from what was accepted). The shortfalls
+// added up until they were bigger than the jitter tolerance, and then an honest
+// listen had holes in it. That is the 25 Sep 2026 defect: two full listens
+// credited about half, with the quiz left locked. Carrying the unspent
+// allowance forward makes wobble in either direction cancel out, which is what
+// "wall clock >= media time" always meant.
 //
 // The budget is charged against the INCREASE IN COVERED SECONDS, not the raw
 // length of the intervals sent. That matters: bridging (see the tolerance
 // below) credits a second or two across a gap, and charging only the raw
 // lengths would let a script send a cheap stub either side of every gap and
 // bridge its way through a recording for free.
+//
+// Every comparison is made on values rounded to the millisecond. Coverage
+// totals are sums of floats, and the difference of two of them lands a
+// quadrillionth either side of the true answer; unrounded, `delta > budget`
+// could be true for a beacon that exactly fits, which is a second of an honest
+// listen thrown away for nothing.
 
 /** One accepted stretch of media, in seconds from the start: `[from, to]`. */
 export type Interval = readonly [number, number];
@@ -189,6 +206,12 @@ export function spansDuration(
 export interface ListenState {
   coverage: Interval[];
   coveredSecs: number;
+  /**
+   * Epoch ms of the FIRST beacon ever accepted for this recording; null when
+   * there has been none. The cumulative budget is measured from here, so it is
+   * set once and never moved.
+   */
+  firstBeaconAt: number | null;
   /** Epoch ms of the previous accepted beacon; null when there has been none. */
   lastBeaconAt: number | null;
   listened: boolean;
@@ -204,29 +227,54 @@ export interface BeaconOptions {
 export interface BeaconResult extends ListenState {
   /** True only on the beacon that first proves the full listen. */
   newlyListened: boolean;
+  /**
+   * The furthest media position (seconds from the start) that this beacon's
+   * intervals were accepted up to, or null when none of them were.
+   *
+   * The client needs this. Its intervals are admitted in ascending order and
+   * the one that runs out of budget is shortened from the end, so everything
+   * the beacon sent ABOVE this point is still owed and has to be sent again.
+   * Without it the client restarts from what it sent, the owed tail is never
+   * re-offered, and the shortfall becomes a permanent hole in the coverage.
+   */
+  acceptedTo: number | null;
 }
 
 /**
- * How many seconds of new coverage this beacon may buy: the wall-clock time
- * since the previous beacon, or the one-off allowance for the first one. No
- * per-beacon grace on top — a grace would be granted again on every beacon and
- * would add up to minutes of free skipping over a long recording. None is
- * needed: media time advances no faster than the clock, so an honest beacon's
- * new coverage is always within the time that has passed.
+ * How many seconds of new coverage this beacon may buy.
+ *
+ * The whole allowance for a listen is the wall-clock time since its first
+ * beacon, plus the one-off FIRST_BEACON_ALLOWANCE_SECS; what a beacon may
+ * spend is whatever is left of that once the seconds already credited are
+ * deducted. So a second of media never costs less than a second of real time,
+ * and a beacon that arrives a moment early does not forfeit the difference —
+ * it stays in the pot for the next one.
+ *
+ * There is no grace on top of the clock. A grace would be granted again on
+ * every beacon and would add up to minutes of free skipping over a long
+ * recording; the slack here is real time that really passed and has not been
+ * spent yet.
  */
 export function beaconBudgetSecs(state: ListenState, now: number): number {
-  if (state.lastBeaconAt === null) return FIRST_BEACON_ALLOWANCE_SECS;
-  const elapsed = (now - state.lastBeaconAt) / 1000;
-  return elapsed > 0 ? elapsed : 0;
+  if (state.firstBeaconAt === null) return FIRST_BEACON_ALLOWANCE_SECS;
+  const elapsed = (now - state.firstBeaconAt) / 1000;
+  // Credited so far, measured from the coverage itself rather than from the
+  // stored total, so a rounded or hand-edited seconds_heard cannot buy time.
+  const spent = coveredSecs(mergeIntervals(state.coverage));
+  const budget = round(FIRST_BEACON_ALLOWANCE_SECS + Math.max(0, elapsed) - spent);
+  return budget > 0 ? budget : 0;
 }
 
 /**
  * Fold one beacon into the stored state.
  *
  * The intervals are cleaned, then admitted one at a time in ascending order,
- * each charged the number of seconds it ADDS to the covered total. When the
- * budget runs out the rest of the beacon is ignored: the trainee simply has to
- * keep listening, which is the point.
+ * each charged the number of seconds it ADDS to the covered total. An interval
+ * that adds nothing — one the client is sending again because it was not told
+ * the first time whether it landed — costs nothing and is always accepted.
+ * When the budget runs out the interval that broke it is shortened to fit and
+ * the rest of the beacon is left alone; `acceptedTo` tells the client where
+ * that happened so it can offer the remainder again on the next beacon.
  */
 export function applyBeacon(
   state: ListenState,
@@ -236,12 +284,16 @@ export function applyBeacon(
   const clean = sanitiseIntervals(intervals, opts.durationSecs).sort((a, b) => a[0] - b[0]);
   let coverage = mergeIntervals(state.coverage);
   let budget = beaconBudgetSecs(state, opts.now);
+  let acceptedTo: number | null = null;
 
   for (const interval of clean) {
-    if (budget <= 0) break;
     const before = coveredSecs(coverage);
     let candidate = mergeIntervals([...coverage, interval]);
-    let delta = coveredSecs(candidate) - before;
+    // Rounded to the millisecond: an unrounded difference of two float sums is
+    // a hair over or under the true value, and "a hair over" must not cost a
+    // beacon that exactly fits its budget.
+    let delta = round(coveredSecs(candidate) - before);
+    let admittedTo = interval[1];
 
     if (delta > budget) {
       // Shorten it from the end so it fits. Coverage grows at most one second
@@ -251,12 +303,17 @@ export function applyBeacon(
       const trimmed: Interval = [interval[0], round(interval[1] - (delta - budget))];
       if (trimmed[1] <= trimmed[0]) break;
       candidate = mergeIntervals([...coverage, trimmed]);
-      delta = coveredSecs(candidate) - before;
+      delta = round(coveredSecs(candidate) - before);
       if (delta > budget) break;
+      admittedTo = trimmed[1];
     }
 
     coverage = candidate;
     budget = round(budget - delta);
+    if (acceptedTo === null || admittedTo > acceptedTo) acceptedTo = admittedTo;
+    // The budget is spent and this interval was cut short: whatever the beacon
+    // still holds above `acceptedTo` is owed, not refused.
+    if (admittedTo < interval[1]) break;
   }
 
   const covered = coveredSecs(coverage);
@@ -264,9 +321,11 @@ export function applyBeacon(
   return {
     coverage,
     coveredSecs: covered,
+    firstBeaconAt: state.firstBeaconAt ?? opts.now,
     lastBeaconAt: opts.now,
     listened,
     newlyListened: listened && !state.listened,
+    acceptedTo,
   };
 }
 

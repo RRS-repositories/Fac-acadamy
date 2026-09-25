@@ -50,6 +50,19 @@ export const MediaProgressResponseSchema = z.object({
   coveredSecs: z.number(),
   durationSecs: z.number().int().nullable(),
   requiredSecs: z.number(),
+  /**
+   * The furthest media position, in seconds, that THIS request's intervals were
+   * credited up to — null when none of them were.
+   *
+   * The server admits intervals in ascending order and shortens the one that
+   * exhausts its wall-clock budget, so anything the client sent above this
+   * point has not been counted yet. The client keeps that remainder and sends
+   * it again with the next beacon. Without it the client would restart from
+   * what it sent, the uncounted tail would never be re-offered, and every
+   * shortfall would become a permanent hole in the coverage — which is exactly
+   * the defect found on 25 Sep 2026.
+   */
+  acceptedTo: z.number().nullable(),
 });
 export type MediaProgressResponse = z.infer<typeof MediaProgressResponseSchema>;
 

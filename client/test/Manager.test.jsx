@@ -201,6 +201,50 @@ const PREVIEW = {
   ],
 };
 
+/*
+ * What this trainee did before their current track. Invented programme names:
+ * the real ones are seeded from the approved content and read at request time,
+ * so none of them is written into the repo.
+ */
+const HISTORY = {
+  completedProgrammes: [
+    {
+      kind: 'DEPT',
+      ref: 'TEST',
+      name: 'Test Department Academy',
+      completedAt: ago(30 * DAY),
+      hasCertificate: true,
+    },
+    {
+      kind: 'LEVEL',
+      ref: '1',
+      name: 'Test Level Name',
+      completedAt: ago(60 * DAY),
+      hasCertificate: false,
+    },
+  ],
+  previousTracks: [
+    {
+      trackCode: 'TEST1',
+      trackLabel: 'Test Programme One',
+      heldFrom: ago(60 * DAY),
+      heldUntil: ago(30 * DAY),
+      stagesPassed: 6,
+      stagesTotal: 6,
+    },
+    {
+      trackCode: 'TEST2',
+      trackLabel: 'Test Programme Two',
+      // The audit trail only caught them LEAVING this one, so the start is
+      // genuinely unknown and the screen must not invent a date for it.
+      heldFrom: null,
+      heldUntil: ago(80 * DAY),
+      stagesPassed: 2,
+      stagesTotal: 14,
+    },
+  ],
+};
+
 const DETAIL = {
   trainee: AVERY,
   stages: [
@@ -229,6 +273,13 @@ const DETAIL = {
       lastAttemptAt: ago(DAY),
     },
   ],
+  history: HISTORY,
+};
+
+/** The same trainee before they had ever been moved: nothing to look back on. */
+const DETAIL_NO_HISTORY = {
+  ...DETAIL,
+  history: { completedProgrammes: [], previousTracks: [] },
 };
 
 /** The manager endpoints a roster screen needs, with a mutable roster. */
@@ -826,6 +877,74 @@ describe('One trainee', () => {
     // The same account controls as the roster row.
     expect(screen.getByRole('button', { name: 'Disable' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Track for Avery Stone' })).toBeInTheDocument();
+  });
+
+  it('draws no history section for a trainee who has never been moved', async () => {
+    mockFetch({ ...managerRoutes(), 'GET /api/manager/trainee/11': [200, DETAIL_NO_HISTORY] });
+    renderApp('/manager/trainee/11');
+
+    expect(await screen.findByRole('heading', { name: 'Avery Stone' })).toBeInTheDocument();
+    // An empty box says less than nothing, so there is no box.
+    expect(screen.queryByTestId('trainee-history')).toBeNull();
+    expect(screen.queryByText('Before this track')).toBeNull();
+  });
+
+  it('shows the programmes they completed and the tracks they used to be on', async () => {
+    mockFetch({ ...managerRoutes(), 'GET /api/manager/trainee/11': [200, DETAIL] });
+    renderApp('/manager/trainee/11');
+
+    expect(await screen.findByRole('heading', { name: 'Avery Stone' })).toBeInTheDocument();
+    const history = within(await screen.findByTestId('trainee-history'));
+    expect(history.getByRole('heading', { name: 'Before this track' })).toBeInTheDocument();
+
+    // A finished department academy: its name, its date and its certificate.
+    const dept = within(document.querySelector('[data-programme="DEPT:TEST"]'));
+    expect(dept.getByText('Department academy')).toBeInTheDocument();
+    expect(dept.getByText('Test Department Academy')).toBeInTheDocument();
+    expect(dept.getByText(/certificate issued/)).toBeInTheDocument();
+
+    // A finished level, which has no certificate yet: said plainly, not hidden.
+    const level = within(document.querySelector('[data-programme="LEVEL:1"]'));
+    expect(level.getByText('Level 1')).toBeInTheDocument();
+    expect(level.getByText('Test Level Name')).toBeInTheDocument();
+    expect(level.getByText(/no certificate yet/)).toBeInTheDocument();
+
+    // A previous track: how far they got, out of that track's own stage count.
+    const first = within(document.querySelector('[data-previous-track="TEST1"]'));
+    expect(first.getByText('Test Programme One')).toBeInTheDocument();
+    expect(first.getByText(/6 of 6 stages passed/)).toBeInTheDocument();
+    expect(first.getByText(/ – /)).toBeInTheDocument();
+    expect(first.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+
+    // No start date in the trail means no invented one.
+    const second = within(document.querySelector('[data-previous-track="TEST2"]'));
+    expect(second.getByText(/2 of 14 stages passed/)).toBeInTheDocument();
+    expect(second.getByText(/^Until /)).toBeInTheDocument();
+    expect(second.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '14');
+
+    // It comes AFTER the current programme, never instead of it.
+    const sections = Array.from(document.querySelectorAll('section'));
+    const stageChip = document.querySelector('[data-stage="l1-1"]');
+    const current = sections.find((s) => s.contains(stageChip));
+    expect(current.compareDocumentPosition(screen.getByTestId('trainee-history'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('reads a one-day spell as a single date, not as a range of one day', async () => {
+    const sameDay = {
+      ...DETAIL,
+      history: {
+        completedProgrammes: [],
+        previousTracks: [{ ...HISTORY.previousTracks[0], heldFrom: ago(DAY), heldUntil: ago(DAY) }],
+      },
+    };
+    mockFetch({ ...managerRoutes(), 'GET /api/manager/trainee/11': [200, sameDay] });
+    renderApp('/manager/trainee/11');
+
+    const row = within(await screen.findByTestId('trainee-history'));
+    expect(row.getByText(/^On /)).toBeInTheDocument();
+    expect(row.queryByText(/ – /)).toBeNull();
   });
 });
 

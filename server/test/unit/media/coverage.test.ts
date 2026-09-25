@@ -22,7 +22,67 @@ const LONG = 600;
 const T0 = Date.UTC(2026, 8, 23, 10, 0, 0);
 
 function fresh(): ListenState {
-  return { coverage: [], coveredSecs: 0, lastBeaconAt: null, listened: false };
+  return {
+    coverage: [],
+    coveredSecs: 0,
+    firstBeaconAt: null,
+    lastBeaconAt: null,
+    listened: false,
+  };
+}
+
+/**
+ * A real player against a real clock, which is not the tidy thing
+ * `playThrough` below models.
+ *
+ * The media element plays continuously in wall-clock time; what a beacon
+ * reports is the last position `timeupdate` happened to hand over before the
+ * flush, so every beacon under-reports by a small, VARYING lag. The media
+ * seconds between two beacons are therefore
+ *
+ *     (wall gap) + (previous lag - this lag)
+ *
+ * which is larger than the wall gap whenever the lag shrinks — on a beacon
+ * that fires a touch early, after a slow request, in a busy tab. Nothing has
+ * been skipped: the total media reported is always the total wall clock minus
+ * the current lag, so it never outruns the clock. It is only the SHARE-OUT
+ * between beacons that wobbles, in both directions.
+ *
+ * `slowAt` makes one beacon take much longer than its interval — the request
+ * that hangs — after which the client reports the media it played meanwhile.
+ */
+function playRealtime(
+  durationSecs: number,
+  opts: { lags?: readonly number[]; slowAt?: number } = {},
+): { state: ListenState; sent: number; wallSecs: number } {
+  // Tenths of a second of reporting lag, cycling: a lag that shrinks is what
+  // makes a beacon's media advance exceed the wall time since the last one.
+  const lags = opts.lags ?? [0.4, 0.1, 0.6, 0.2, 0.5, 0.05];
+  let state: ListenState = fresh();
+  let clock = T0;
+  let reported = 0; // the furthest media position the client has reported
+  let sent = 0;
+  let i = 0;
+
+  while (reported < durationSecs) {
+    const gapMs = i === opts.slowAt ? 17_000 : 5_000;
+    clock += gapMs;
+    const elapsed = (clock - T0) / 1000;
+    const lag = lags[i % lags.length]!;
+    // Where playback has really got to, as the browser last reported it.
+    const at = Math.min(round3(elapsed - lag), durationSecs);
+    if (at > reported) {
+      state = applyBeacon(state, [[reported, at]], { now: clock, durationSecs });
+      reported = at;
+    }
+    sent++;
+    i++;
+  }
+  return { state, sent, wallSecs: (clock - T0) / 1000 };
+}
+
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
 }
 
 /**
@@ -146,6 +206,38 @@ describe('spansDuration / requiredSecs', () => {
     expect(spansDuration([[0, 10_000]], null)).toBe(false);
     expect(requiredSecs(null)).toBe(0);
     expect(requiredSecs(SHORT)).toBe(SHORT - JITTER_TOLERANCE_SECS);
+  });
+});
+
+describe('applyBeacon — an honest listen against a real clock', () => {
+  // The bug of 25 Sep 2026: a trainee heard two recordings right through
+  // without skipping and the server credited about half of each, leaving the
+  // quiz locked (s1-rec1: 567 s of 1052 credited, in ~51 fragments; s1-rec2:
+  // 413 s of 809). The cause was the budget, not the listening: a beacon could
+  // buy at most the wall-clock time since the previous beacon, with no slack,
+  // so every wobble in when a beacon fired trimmed the end off it — and the
+  // trimmed tail was never re-credited.
+  it('credits every second of a listen whose beacons wobble in both directions', () => {
+    const { state, sent, wallSecs } = playRealtime(LONG, { slowAt: 11 });
+
+    // Nothing was skipped, so nothing may be missing: one unbroken span.
+    expect(state.coverage).toHaveLength(1);
+    expect(state.coverage[0]![0]).toBeLessThanOrEqual(JITTER_TOLERANCE_SECS);
+    expect(state.coverage[0]![1]).toBeGreaterThanOrEqual(LONG - JITTER_TOLERANCE_SECS);
+    expect(state.coveredSecs).toBeGreaterThanOrEqual(requiredSecs(LONG));
+    expect(state.listened).toBe(true);
+
+    // And the listen really did take the time it claims: the rule is not being
+    // passed by a shortcut in the fixture.
+    expect(sent).toBeGreaterThan(100);
+    expect(wallSecs).toBeGreaterThanOrEqual(LONG);
+  });
+
+  it('never credits more than the wall clock that has passed since the first beacon', () => {
+    // The invariant the budget exists to enforce, stated over the whole listen
+    // rather than one beacon at a time.
+    const { state, wallSecs } = playRealtime(LONG);
+    expect(state.coveredSecs).toBeLessThanOrEqual(wallSecs + FIRST_BEACON_ALLOWANCE_SECS);
   });
 });
 
@@ -278,6 +370,83 @@ describe('applyBeacon — a skip does not pass', () => {
       { now: T0, durationSecs: null },
     );
     expect(unknown.listened).toBe(false);
+  });
+});
+
+describe('applyBeacon — what the beacon tells the client back', () => {
+  it('reports the end of what it accepted, and null when it accepted nothing', () => {
+    // A first beacon inside its allowance: all of it lands.
+    const first = applyBeacon(fresh(), [[0, 8]], { now: T0, durationSecs: LONG });
+    expect(first.acceptedTo).toBe(8);
+
+    // A second beacon one second later can afford two more seconds (eight of
+    // the ten-second allowance are spent), so it is cut short — and says where.
+    const second = applyBeacon(first, [[8, 20]], { now: T0 + 1_000, durationSecs: LONG });
+    expect(second.acceptedTo).toBe(11);
+    expect(second.coveredSecs).toBe(11);
+
+    // Nothing left to spend: nothing accepted, and the client is told so.
+    const third = applyBeacon(second, [[11, 30]], { now: T0 + 1_000, durationSecs: LONG });
+    expect(third.acceptedTo).toBeNull();
+    expect(third.coveredSecs).toBe(11);
+  });
+
+  it('accepts an interval it has already counted, so a resend is not refused forever', () => {
+    const first = applyBeacon(fresh(), [[0, 5]], { now: T0, durationSecs: LONG });
+    // The same stretch again, with no budget at all: it adds nothing, so it
+    // costs nothing, and the client is told it need not keep offering it.
+    const again = applyBeacon(first, [[0, 5]], { now: T0, durationSecs: LONG });
+    expect(again.acceptedTo).toBe(5);
+    expect(again.coveredSecs).toBe(5);
+  });
+
+  it('lets the client repair a shortfall by sending the remainder again', () => {
+    // What the player now does: send, see how far the server got, keep the rest
+    // and offer it with the next beacon. The recording must end up whole.
+    const duration = 40;
+    let state: ListenState = fresh();
+    let clock = T0;
+    let owed: [number, number][] = [];
+    let at = 0;
+
+    while (at < duration) {
+      const to = Math.min(at + 5, duration);
+      clock += 5_000;
+      const batch: [number, number][] = [...owed, [at, to]];
+      const result = applyBeacon(state, batch, { now: clock, durationSecs: duration });
+      state = result;
+      // Everything above what the server accepted is still owed.
+      owed = batch
+        .filter(([, end]) => result.acceptedTo === null || end > result.acceptedTo)
+        .map(([start, end]): [number, number] => [
+          result.acceptedTo === null ? start : Math.max(start, result.acceptedTo),
+          end,
+        ]);
+      at = to;
+    }
+    // A few more beacons with nothing new to play: the debt, if any, clears.
+    for (let i = 0; i < 3 && owed.length > 0; i++) {
+      clock += 5_000;
+      const result = applyBeacon(state, owed, { now: clock, durationSecs: duration });
+      state = result;
+      owed = owed.filter(([, end]) => result.acceptedTo === null || end > result.acceptedTo);
+    }
+    expect(state.coverage).toEqual([[0, duration]]);
+    expect(state.listened).toBe(true);
+  });
+
+  it('remembers when the listen began, and never restarts it', () => {
+    const first = applyBeacon(fresh(), [[0, 5]], { now: T0, durationSecs: LONG });
+    expect(first.firstBeaconAt).toBe(T0);
+    const later = applyBeacon(first, [[5, 10]], { now: T0 + 5_000, durationSecs: LONG });
+    expect(later.firstBeaconAt).toBe(T0);
+    expect(later.lastBeaconAt).toBe(T0 + 5_000);
+
+    // And the budget is measured from it: a beacon may not spend time that the
+    // earlier beacons of the same listen have already spent.
+    const greedy = applyBeacon(later, [[10, LONG]], { now: T0 + 6_000, durationSecs: LONG });
+    expect(greedy.coveredSecs).toBeLessThanOrEqual(FIRST_BEACON_ALLOWANCE_SECS + 6);
+    expect(greedy.listened).toBe(false);
   });
 });
 

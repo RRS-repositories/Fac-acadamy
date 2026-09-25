@@ -1,6 +1,6 @@
 # Handoff — where the FAC Academy project stands
 
-*Last updated: 24 Sep 2026 (both repositories merged: academy PR #1, CRM PR #500). Update this file at the end of every working session.*
+*Last updated: 25 Sep 2026 (listening-budget fix, branch `sukhendu/listen-coverage-fix`; not committed). Update this file at the end of every working session.*
 
 ## State right now
 
@@ -57,6 +57,14 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 - `PROTOTYPE_PATH=<path outside repo> npx tsx ops/seed/seed-content.ts --expect-db academy_dev` (add `--dry-run` to roll back). Verify: `npx tsx ops/seed/verify-seed.ts --expect-db academy_dev`.
 - Migration 0003 adds the DEPARTMENT recording category, department metadata, `stages.sort` and the question upsert key.
 - Leak canaries in `ops/fixtures/leak-canaries.json` are hashes only.
+
+## Listening budget fix (25 Sep, branch `sukhendu/listen-coverage-fix`)
+
+- **The bug.** A trainee heard `s1-rec1` (1052 s) and `s1-rec2` (809 s) right through without skipping; the server credited 567 s and 413 s, in ~51 and ~45 fragments, and left both stage quizzes locked. The gaps were multiples of the five-second beacon interval.
+- **Why.** The wall-clock budget was charged one beacon at a time with no slack, so any timing wobble made a beacon's media advance exceed the gap it was measured against; the excess was trimmed off the end, the client never learned it had been trimmed (it restarted from what it SENT), and the shortfalls added up past the two-second jitter tolerance. A third fault made it much worse: `delta > budget` compared unrounded float sums, so once the stored total was a value like 44.76 every exactly-fitting beacon afterwards was refused outright.
+- **The fix.** The budget is now cumulative — total credited never exceeds the wall clock since the listen's first beacon, plus the first-beacon allowance — so wobble in either direction cancels out. The response carries `acceptedTo`, and the player re-sends whatever was not counted. Comparisons are rounded to the millisecond.
+- **Migration 0008** adds `listen_progress.first_beacon_at` (nullable, backfilled from `last_beacon_at`). It creates no table, so it needs no new grant; it checks 0002's instead. **Brad applies it in production.**
+- Proved against the running local app: the same honest 75-second listen on the real recording 49 credited 64.9 s in 3 fragments before the fix and 75 s in 1 fragment after it, and a real browser listen of the 20-second fixture ends up credited in full.
 
 ## Media (S06)
 

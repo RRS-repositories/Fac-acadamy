@@ -44,6 +44,7 @@ function fail(res: Response, status: number, error: MediaErrorCode): void {
 interface StoredProgress {
   coverage: Interval[];
   secondsHeard: number;
+  firstBeaconAt: number | null;
   lastBeaconAt: number | null;
   listened: boolean;
 }
@@ -56,22 +57,32 @@ async function loadProgress(
   const { rows } = await db.query<{
     coverage: unknown;
     seconds_heard: number;
+    first_beacon_at: Date | null;
     last_beacon_at: Date | null;
     completed_at: Date | null;
   }>(
-    `SELECT coverage, seconds_heard, last_beacon_at, completed_at
+    `SELECT coverage, seconds_heard, first_beacon_at, last_beacon_at, completed_at
        FROM academy.listen_progress
       WHERE trainee_id = $1 AND recording_id = $2`,
     [traineeId, recordingId],
   );
   const row = rows[0];
   if (row === undefined) {
-    return { coverage: [], secondsHeard: 0, lastBeaconAt: null, listened: false };
+    return {
+      coverage: [],
+      secondsHeard: 0,
+      firstBeaconAt: null,
+      lastBeaconAt: null,
+      listened: false,
+    };
   }
   const coverage = parseCoverage(row.coverage);
   return {
     coverage,
     secondsHeard: coveredSecs(coverage),
+    // 0008 backfilled first_beacon_at from last_beacon_at for rows written
+    // before the column existed, so it is only null when nothing has beaconed.
+    firstBeaconAt: row.first_beacon_at === null ? null : row.first_beacon_at.getTime(),
     lastBeaconAt: row.last_beacon_at === null ? null : row.last_beacon_at.getTime(),
     listened: row.completed_at !== null,
   };
@@ -182,6 +193,7 @@ async function recordBeacon(
     const state: ListenState = {
       coverage: stored.coverage,
       coveredSecs: stored.secondsHeard,
+      firstBeaconAt: stored.firstBeaconAt,
       lastBeaconAt: stored.lastBeaconAt,
       listened: stored.listened,
     };
@@ -190,16 +202,22 @@ async function recordBeacon(
       durationSecs: recording.durationSecs,
     });
 
+    // first_beacon_at is written with COALESCE, like completed_at: the listen's
+    // clock starts once and never restarts, or the budget it anchors could be
+    // pushed forward and the whole rule with it.
     await client.query(
       `INSERT INTO academy.listen_progress
-         (trainee_id, recording_id, seconds_heard, coverage, last_beacon_at, completed_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6::timestamptz)
+         (trainee_id, recording_id, seconds_heard, coverage,
+          first_beacon_at, last_beacon_at, completed_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $5::timestamptz, $6::timestamptz)
        ON CONFLICT (trainee_id, recording_id) DO UPDATE
-          SET seconds_heard  = EXCLUDED.seconds_heard,
-              coverage       = EXCLUDED.coverage,
-              last_beacon_at = EXCLUDED.last_beacon_at,
-              completed_at   = COALESCE(academy.listen_progress.completed_at,
-                                        EXCLUDED.completed_at)`,
+          SET seconds_heard   = EXCLUDED.seconds_heard,
+              coverage        = EXCLUDED.coverage,
+              first_beacon_at = COALESCE(academy.listen_progress.first_beacon_at,
+                                         EXCLUDED.first_beacon_at),
+              last_beacon_at  = EXCLUDED.last_beacon_at,
+              completed_at    = COALESCE(academy.listen_progress.completed_at,
+                                         EXCLUDED.completed_at)`,
       [
         traineeId,
         recording.id,
@@ -232,6 +250,9 @@ async function recordBeacon(
       coveredSecs: next.coveredSecs,
       durationSecs: recording.durationSecs,
       requiredSecs: requiredSecs(recording.durationSecs),
+      // How far up this beacon's own intervals the server got. The player sends
+      // everything above it again, so a shortfall is a delay and never a hole.
+      acceptedTo: next.acceptedTo,
     };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
