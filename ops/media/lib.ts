@@ -156,14 +156,29 @@ export function looksLikeProduction(name: string): boolean {
   return isProductionDbName(name);
 }
 
-export function parseExpectDb(raw: string | undefined): string {
+/**
+ * The wrong-database guard for the media scripts.
+ *
+ * `confirmProduction` is opt-in per script, and only ONE passes it:
+ * ingest-media, because adding a recording to the live academy is a thing
+ * somebody legitimately needs to do — a slot is filled one file at a time,
+ * for months after launch, and there is no other route to it.
+ *
+ * extract-media never passes it. It reads the prototype HTML, which holds six
+ * real client recordings and must never be within reach of the production
+ * server; it belongs on a development machine and nowhere else.
+ *
+ * Even with the flag this stays deliberately awkward: the live database has to
+ * be named twice, in two different arguments, before anything is written.
+ */
+export function parseExpectDb(raw: string | undefined, confirmProduction = false): string {
   const db = raw?.trim() ?? '';
   if (!db) throw new MediaError('--expect-db <database name> is required (wrong-database guard).');
-  if (looksLikeProduction(db)) {
+  if (looksLikeProduction(db) && !confirmProduction) {
     throw new MediaError(
-      `Refusing to run against "${db}": ${productionReason(db)}. These scripts run ` +
-        'against a local or staging database; on the production server the operator runs them ' +
-        'himself, the way he applies the migrations.',
+      `Refusing to run against "${db}" without --confirm-production: ${productionReason(db)}.\n` +
+        'If you are adding a recording to the live academy, that is a supported thing to do:\n' +
+        'add --confirm-production, and run --dry-run first to read what it would write.',
     );
   }
   return db;
