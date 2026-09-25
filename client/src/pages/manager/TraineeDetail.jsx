@@ -4,6 +4,7 @@ import ManagerLayout from '../../components/manager/ManagerLayout.jsx';
 import OnlineDot from '../../components/manager/OnlineDot.jsx';
 import StageChips from '../../components/manager/StageChips.jsx';
 import TraineeActions from '../../components/manager/TraineeActions.jsx';
+import TraineeHistory from '../../components/manager/TraineeHistory.jsx';
 import { ErrorNotice, Notice } from '../../components/manager/Notice.jsx';
 import ProgressBar from '../../components/training/ProgressBar.jsx';
 import { badgeBase, cardClass } from '../../components/training/styles.js';
@@ -12,7 +13,8 @@ import { percent, relativeTime, shortDate, trackLabel } from '../../lib/format.j
 
 /*
  * One trainee (Section 07 task 1): their account, their position and every
- * stage on their programme with attempts, best mark and fails.
+ * stage on their programme with attempts, best mark and fails, followed by
+ * what they did before this programme (TraineeHistory).
  *
  * Stage titles and numbers only — a manager never sees the lesson text or a
  * quiz question through this screen, and the bundle holds neither.
@@ -49,6 +51,7 @@ export default function TraineeDetail() {
 
   const trainee = query.data?.trainee ?? null;
   const stages = query.data?.stages ?? [];
+  const history = query.data?.history ?? null;
   if (!trainee) {
     return (
       <ManagerLayout title="Trainee">
@@ -119,6 +122,8 @@ export default function TraineeDetail() {
         </h2>
         <StageChips stages={stages} />
       </section>
+
+      <TraineeHistory history={history} />
     </ManagerLayout>
   );
 }
