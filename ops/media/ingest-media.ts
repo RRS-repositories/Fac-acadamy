@@ -5,7 +5,7 @@
 //   MEDIA_ROOT=<folder> npx tsx ops/media/ingest-media.ts \
 //     --file "<path OUTSIDE the repo>" --stage <stageCode> --title "..." \
 //     [--description "..."] [--recording-code <code>] \
-//     --expect-db <name> [--dry-run]
+//     --expect-db <name> [--confirm-production] [--dry-run]
 //
 // What it does, in order:
 //   1. refuses a file inside the repo (media never enters git) and any format
@@ -85,6 +85,7 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
         description: { type: 'string' },
         'recording-code': { type: 'string' },
         'expect-db': { type: 'string' },
+        'confirm-production': { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
         replace: { type: 'boolean', default: false },
       },
@@ -94,7 +95,7 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
     throw new MediaError(
       `${(err as Error).message}\nUsage: ingest-media.ts --file <path outside the repo> ` +
         '--stage <stageCode> --title "..." [--description "..."] [--recording-code <code>] ' +
-        '--expect-db <name> [--dry-run] [--replace]',
+        '--expect-db <name> [--confirm-production] [--dry-run] [--replace]',
     );
   }
 
@@ -126,7 +127,7 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
     title,
     description: description === '' ? null : description,
     recordingCode: recordingCode === '' ? null : recordingCode,
-    expectDb: parseExpectDb(str('expect-db')),
+    expectDb: parseExpectDb(str('expect-db'), values['confirm-production'] === true),
     dryRun: values['dry-run'] === true,
     replace: values['replace'] === true,
   };

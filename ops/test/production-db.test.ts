@@ -92,3 +92,23 @@ describe('the IT admin commands make production deliberate, not impossible', () 
     expect(() => adminExpectDb('   ')).toThrow(/--expect-db/);
   });
 });
+
+describe('the media scripts: one way through, and only one', () => {
+  it('still refuses the CRM database by default', () => {
+    expect(() => mediaExpectDb(CRM_DB)).toThrow(MediaError);
+    expect(() => mediaExpectDb(CRM_DB)).toThrow(/--confirm-production/);
+  });
+
+  it('lets a recording be added to the live academy when that is meant', () => {
+    expect(mediaExpectDb(CRM_DB, true)).toBe(CRM_DB);
+  });
+
+  it('does not ask for the flag on a local database', () => {
+    expect(mediaExpectDb('academy_dev')).toBe('academy_dev');
+    expect(mediaExpectDb('academy_test', true)).toBe('academy_test');
+  });
+
+  it('still requires --expect-db at all', () => {
+    expect(() => mediaExpectDb(undefined, true)).toThrow(/--expect-db/);
+  });
+});
