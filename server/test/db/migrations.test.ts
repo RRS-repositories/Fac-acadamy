@@ -1,4 +1,4 @@
-// Integration test: applies 0000-0007 to a THROW-AWAY database and checks the
+// Integration test: applies 0000-0008 to a THROW-AWAY database and checks the
 // result. Runs only when MIGRATION_TEST_DB_NAME is set (CI and the local test
 // database set it). It DROPS the academy schema in that database: never point
 // it at anything that matters.
@@ -52,7 +52,7 @@ function tablesCreatedIn(filename: string): string[] {
 
 const quiet = () => undefined;
 
-describe.skipIf(!TEST_DB)('migrations 0000-0007 on a fresh database', () => {
+describe.skipIf(!TEST_DB)('migrations 0000-0008 on a fresh database', () => {
   let settings: DbSettings;
   let client: pg.Client;
 
@@ -90,6 +90,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0007 on a fresh database', () => {
       '0005_media.sql',
       '0006_notifications.sql',
       '0007_certificates.sql',
+      '0008_listen_budget.sql',
     ]);
   });
 
@@ -206,6 +207,64 @@ describe.skipIf(!TEST_DB)('migrations 0000-0007 on a fresh database', () => {
     expect(Number(rows[0]?.n)).toBeGreaterThan(0);
   });
 
+  it('adds listen_progress.first_beacon_at, nullable and with no default (0008)', async () => {
+    const { rows } = await client.query<{ is_nullable: string; column_default: string | null }>(
+      `SELECT is_nullable, column_default FROM information_schema.columns
+        WHERE table_schema = 'academy' AND table_name = 'listen_progress'
+          AND column_name = 'first_beacon_at'`,
+    );
+    expect(rows).toHaveLength(1);
+    // NULL means "no beacon yet"; a DEFAULT now() would stamp the current time
+    // on any insert that left the column out, which is a free budget reset.
+    expect(rows[0]?.is_nullable).toBe('YES');
+    expect(rows[0]?.column_default).toBeNull();
+  });
+
+  it('backfills first_beacon_at from last_beacon_at for a row written before 0008', async () => {
+    // What 0008 does to the rows that already exist: the honest reading of a
+    // listen with no recorded start is "no earlier than the last beacon seen".
+    await client.query('BEGIN');
+    try {
+      const trainee = await client.query<{ id: string }>(
+        `INSERT INTO trainees (full_name, email, track)
+         VALUES ('Trainee Backfill', 'trainee.backfill@example.com', 'ADMIN') RETURNING id`,
+      );
+      const recording = await client.query<{ id: string }>(
+        `INSERT INTO call_recordings (category, title, media_key, duration_secs)
+         VALUES ('INDUCTION', 'Backfill check', 'academy/media/backfill.mp3', 30) RETURNING id`,
+      );
+      await client.query(
+        `INSERT INTO listen_progress (trainee_id, recording_id, seconds_heard, last_beacon_at)
+         VALUES ($1, $2, 12, now() - interval '1 hour')`,
+        [trainee.rows[0]!.id, recording.rows[0]!.id],
+      );
+      // The column exists by now, so run the backfill statement itself.
+      await client.query(
+        `UPDATE listen_progress SET first_beacon_at = last_beacon_at
+          WHERE first_beacon_at IS NULL AND last_beacon_at IS NOT NULL`,
+      );
+      const { rows } = await client.query<{ same: boolean }>(
+        `SELECT first_beacon_at = last_beacon_at AS same FROM listen_progress
+          WHERE trainee_id = $1`,
+        [trainee.rows[0]!.id],
+      );
+      expect(rows[0]?.same).toBe(true);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('leaves academy_app able to write listen_progress, first_beacon_at included (0008)', async () => {
+    const role = await client.query("SELECT 1 FROM pg_roles WHERE rolname = 'academy_app'");
+    if (role.rowCount === 0) return; // role could not be created here
+    const { rows } = await client.query<{ sel: boolean; ins: boolean; upd: boolean }>(
+      `SELECT has_table_privilege('academy_app', 'academy.listen_progress', 'SELECT') AS sel,
+              has_table_privilege('academy_app', 'academy.listen_progress', 'INSERT') AS ins,
+              has_table_privilege('academy_app', 'academy.listen_progress', 'UPDATE') AS upd`,
+    );
+    expect(rows[0]).toEqual({ sel: true, ins: true, upd: true });
+  });
+
   it('creates every table named in 0001 (19) and the 0002 tables', async () => {
     const from0001 = tablesCreatedIn('0001_academy_schema.sql');
     expect(from0001).toHaveLength(19);
@@ -281,7 +340,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0007 on a fresh database', () => {
   it('applies nothing on a second run', async () => {
     const res = await applyMigrations({ commit: true, expectDb: TEST_DB, settings, log: quiet });
     expect(res.applied).toEqual([]);
-    expect(res.appliedBefore).toBe(8);
+    expect(res.appliedBefore).toBe(9);
   });
 
   it('dry run on an up-to-date database lists 0 pending', async () => {

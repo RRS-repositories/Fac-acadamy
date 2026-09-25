@@ -145,6 +145,8 @@ export interface BeaconBody {
   coveredSecs: number;
   durationSecs: number | null;
   requiredSecs: number;
+  /** How far up the intervals just sent the server counted; null if none. */
+  acceptedTo: number | null;
 }
 
 export async function beacon(

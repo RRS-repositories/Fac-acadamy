@@ -27,8 +27,18 @@ const RECORDING = {
 
 const PROGRESS_PATH = '/api/media/21/progress';
 
+/**
+ * The server's answer to a beacon, in the ordinary case where it counted
+ * everything it was sent: `acceptedTo` is then the furthest second of the
+ * request. It is computed from the request rather than hard-coded, because the
+ * player uses it to decide what it still owes.
+ */
 function progress(listened, coveredSecs) {
-  return [200, { listened, coveredSecs, durationSecs: 30, requiredSecs: 28 }];
+  return (init) => {
+    const { intervals } = JSON.parse(init.body);
+    const acceptedTo = Math.max(...intervals.map(([, to]) => to));
+    return [200, { listened, coveredSecs, durationSecs: 30, requiredSecs: 28, acceptedTo }];
+  };
 }
 
 /** Give jsdom's media elements just enough behaviour to drive the player. */
@@ -133,6 +143,55 @@ describe('NoSeekPlayer', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(callsTo(fetchMock, 'POST', PROGRESS_PATH)).toHaveLength(1);
     expect(lastIntervals(fetchMock)).toEqual([[0, 4]]);
+  });
+
+  it('sends again the seconds the server did not count, and only those', async () => {
+    // The server credits a beacon against the wall clock and shortens the
+    // interval that runs out of it, answering with how far it got. Anything
+    // above that is still owed: if the player restarts from what it SENT, the
+    // tail is never counted again and the coverage keeps a hole — the defect of
+    // 25 Sep 2026, where two full listens were credited about half.
+    vi.useFakeTimers();
+    let call = 0;
+    const fetchMock = mockFetch({
+      [`POST ${PROGRESS_PATH}`]: (init) => {
+        call += 1;
+        const { intervals } = JSON.parse(init.body);
+        const highest = Math.max(...intervals.map(([, to]) => to));
+        // The first beacon is trimmed to two seconds; later ones are accepted.
+        const acceptedTo = call === 1 ? 2 : highest;
+        return [
+          200,
+          {
+            listened: false,
+            coveredSecs: acceptedTo,
+            durationSecs: 30,
+            requiredSecs: 28,
+            acceptedTo,
+          },
+        ];
+      },
+    });
+    const media = renderPlayer();
+
+    fireEvent.click(screen.getByRole('button', { name: /play/i }));
+    playTo(media, 4);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lastIntervals(fetchMock)).toEqual([[0, 4]]);
+
+    playTo(media, 8);
+    await vi.advanceTimersByTimeAsync(5_000);
+    // 2–4 was refused, so it goes again beside what has been played since.
+    expect(lastIntervals(fetchMock)).toEqual([
+      [2, 4],
+      [4, 8],
+    ]);
+
+    // That beacon was accepted in full, so the next one carries the new stretch
+    // and nothing else: an accepted second is never sent twice.
+    playTo(media, 12);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lastIntervals(fetchMock)).toEqual([[8, 12]]);
   });
 
   it('shows the badge the server sent, not the one playback suggests', async () => {

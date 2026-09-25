@@ -2,7 +2,7 @@
 
 Plain SQL files, applied in name order by `server/src/db/migrate.ts`.
 
-## The eight files, in the order they run
+## The nine files, in the order they run
 
 | # | File | What it does |
 |---|---|---|
@@ -14,6 +14,7 @@ Plain SQL files, applied in name order by `server/src/db/migrate.ts`.
 | 0005 | `0005_media.sql` | On-prem media (D15/D16): renames `call_recordings.s3_key` to `media_key` and adds the facts about the file on disk (`byte_size`, `content_type`, `checksum_sha256`, `uploaded_at`). `media_key` stays nullable for "coming soon" slots (D4). |
 | 0006 | `0006_notifications.sql` | `notifications_sent`, with the UNIQUE key that makes "3 fails → ONE message" survive a restart, a retry and two workers racing. |
 | 0007 | `0007_certificates.sql` | The certificates half of D15/D20: `certificates.s3_key` becomes `media_key` (PDFs live under `MEDIA_ROOT` at `academy/certs/`), plus `public_id`, the stored-file facts and the accomplishment text. |
+| 0008 | `0008_listen_budget.sql` | `listen_progress.first_beacon_at`, so the wall-clock budget that proves a full listen is measured over the whole listen instead of one beacon at a time. Fixes the 25 Sep defect where two honest full listens were credited about half and the quiz stayed locked. Adds no table, so it adds no grant; it checks the ones 0002 gave instead. |
 
 `s3_key` still appears in 0001 and 0002 because an applied migration is never
 edited; 0005 and 0007 fix it forward.
@@ -38,7 +39,7 @@ already exist:
    `academy_app` may do, and `citext` is not installed in the CRM's database
    today. It needs a superuser, or a role with CREATE on the database and rights
    to install the extension. In production that is Brad's own admin login.
-3. **0001–0007 run as an owner/admin login too**, not as `academy_app`: they
+3. **0001–0008 run as an owner/admin login too**, not as `academy_app`: they
    create and alter tables and grant rights. Set `MIGRATE_DB_USER` and
    `MIGRATE_DB_PASSWORD`; they override `DB_USER` / `DB_PASSWORD` for the runner
    only. Everything else comes from `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_SSL`.
@@ -48,7 +49,7 @@ already exist:
 In short, on a fresh database:
 
 ```
-create the academy_app login  ->  0000 (elevated)  ->  0001 … 0007 (owner/admin)
+create the academy_app login  ->  0000 (elevated)  ->  0001 … 0008 (owner/admin)
 ```
 
 ## Rules

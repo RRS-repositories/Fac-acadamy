@@ -229,6 +229,72 @@ describe.skipIf(db === null)('S06 listening beacons', () => {
     expect(await listenCompleteRows(session.me.id)).toBe(0);
   });
 
+  it('says how far it got, and finishes the listen when the rest is sent again', async () => {
+    // The 25 Sep 2026 defect, at the route: a beacon that asks for more than
+    // the clock allows is shortened, and the client has to be told where — or
+    // the tail it sent is never counted and the listen keeps a hole in it.
+    const session = await trainee();
+    await passStage(session.me.id, fx.codes.a);
+
+    h.clock.advance(1_000);
+    const first = await beacon(session, fx.realRecordingId, [[0, DURATION]]);
+    expect(first.status).toBe(200);
+    const trimmed = first.body as MediaProgressResponse;
+    expect(trimmed.listened).toBe(false);
+    // Only the first-beacon allowance was affordable, and the answer says so
+    // rather than leaving the client to assume all fifteen seconds landed.
+    expect(trimmed.acceptedTo).toBe(trimmed.coveredSecs);
+    expect(trimmed.acceptedTo).toBeLessThan(DURATION);
+
+    // What the player now does with that: send the remainder again, later.
+    h.clock.advance(6_000);
+    const second = await beacon(session, fx.realRecordingId, [[trimmed.acceptedTo ?? 0, DURATION]]);
+    expect(second.status).toBe(200);
+    const done = second.body as MediaProgressResponse;
+    expect(done.acceptedTo).toBe(DURATION);
+    expect(done.listened).toBe(true);
+
+    // The listen's clock is anchored on its first beacon and does not move.
+    const { rows } = await pool.query<{ first: Date | null; last: Date | null }>(
+      `SELECT first_beacon_at AS first, last_beacon_at AS last
+         FROM academy.listen_progress WHERE trainee_id = $1 AND recording_id = $2`,
+      [session.me.id, fx.realRecordingId],
+    );
+    expect(rows[0]?.first?.getTime()).toBe(h.clock.t - 6_000);
+    expect(rows[0]?.last?.getTime()).toBe(h.clock.t);
+  });
+
+  it('credits an honest listen whose beacons carry a little more media than the clock gap', async () => {
+    // A beacon fires a touch early, or the one before it reported a moment
+    // behind where playback really was: the media between two beacons is then
+    // slightly more than the wall clock between them, in both directions.
+    // Nothing is skipped — the total media never outruns the total clock — so
+    // all of it must be credited.
+    const session = await trainee();
+    await passStage(session.me.id, fx.codes.a);
+
+    const steps: [number, number][] = [
+      [0, 3],
+      [3, 4],
+      [4, 7],
+      [7, 8],
+      [8, 11],
+      [11, 12],
+      [12, DURATION],
+    ];
+    let last: MediaProgressResponse | null = null;
+    for (const [from, to] of steps) {
+      h.clock.advance(2_000); // 14 s of clock for 15 s of media, plus the allowance
+      const res = await beacon(session, fx.realRecordingId, [[from, to]]);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      last = res.body as MediaProgressResponse;
+      // Nothing was ever refused: every beacon was credited to its end.
+      expect(last.acceptedTo).toBe(to);
+    }
+    expect(last?.listened).toBe(true);
+    expect(last?.coveredSecs).toBe(DURATION);
+  });
+
   it('refuses the whole recording claimed in one beacon', async () => {
     const session = await trainee();
     await passStage(session.me.id, fx.codes.a);

@@ -248,7 +248,7 @@ fac-academy/
 │   │   ├── queues/              bull.ts, names.ts (prefix "academy", no colons), producers.ts,
 │   │   │                        runtime.ts, deadLetter.ts
 │   │   └── jobs/                handlers.ts, managerNotify, mediaJobs, certificateJobs
-│   ├── migrations/              0000_extensions … 0007_certificates (eight files; see its README)
+│   ├── migrations/              0000_extensions … 0008_listen_budget (nine files; see its README)
 │   ├── templates/               certificate/ (HTML + two embedded woff2 fonts). Copied beside the
 │   │                            build by ops/deploy.sh — tsup emits only dist/api.js and dist/worker.js
 │   └── test/                    unit/ + api/ (Supertest, synthetic fixtures only)
@@ -449,7 +449,7 @@ ticking along unread.
 - [ ] Brad's 5 content rulings applied or deferred in writing
 
 **Server set-up** (each one is a template in `ops/`, substituted on the server)
-- [ ] Migrations 0000–0007 applied by Brad, in order, with the `academy_app` login already created
+- [ ] Migrations 0000–0008 applied by Brad, in order, with the `academy_app` login already created
 - [ ] `.env` complete on the server; the app refuses to start if anything required is missing
 - [ ] Chromium installed for the certificate PDFs: `npx playwright install chromium` (plus its system libraries). Without it, certificates fail at the moment a trainee finishes a level
 - [ ] pm2: `academy-api` + `academy-worker` from the substituted `ops/pm2/ecosystem.config.cjs`, then **`pm2 save`** (nothing survives a reboot without it) and **`pm2 install pm2-logrotate`** (a full disk takes the CRM down too)

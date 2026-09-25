@@ -39,7 +39,9 @@ function failureFrom(status, body) {
 
 /**
  * POST /api/media/:id/progress with the intervals played so far.
- * Resolves to { listened, coveredSecs, durationSecs, requiredSecs }.
+ * Resolves to { listened, coveredSecs, durationSecs, requiredSecs, acceptedTo }.
+ * `acceptedTo` is how far up the intervals just sent the server counted, so the
+ * caller knows what it still owes; see NoSeekPlayer's `owedAbove`.
  */
 export async function postListenProgress(recordingId, intervals) {
   let res;
