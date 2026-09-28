@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MEDIA_BEACON_INTERVAL_MS } from '@fac-academy/shared';
 import { mediaStreamPath, useListenReporter } from '../../api/media.js';
+import RecordingSummary from './RecordingSummary.jsx';
 import { badgeBase, badgeTone, cardClass } from './styles.js';
 
 /*
@@ -380,6 +381,14 @@ export default function NoSeekPlayer({ recording, stageCode }) {
           listening.
         </p>
       ) : null}
+
+      {/*
+        Under the player, because that is where somebody looks after deciding
+        whether to listen. It renders nothing at all unless the server says the
+        feature is on, and it never touches playback or the listened badge: the
+        full listen is still the only thing that unlocks the quiz.
+      */}
+      <RecordingSummary recordingId={recording.id} mediaType={recording.mediaType} />
     </li>
   );
 }

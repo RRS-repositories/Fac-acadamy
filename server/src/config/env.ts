@@ -11,6 +11,16 @@ import { parseMfaKey } from '../modules/auth/mfaCrypto.js';
 // which turns the string 'false' into true.
 const bool = z.enum(['true', 'false']).transform((v) => v === 'true');
 
+/** `new URL` without the throw: zod has already checked it parses, but the
+ *  production-only rules below run over values from other branches too. */
+function safeUrl(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
 const ConfigSchema = DbSettingsSchema.extend({
   // Not just a label: production is what turns the secure session cookie on
   // (COOKIE_SECURE below), refuses the mock CRM, and requires Redis and https.
@@ -91,6 +101,25 @@ const ConfigSchema = DbSettingsSchema.extend({
     .transform((value) => resolve(value)),
   // Ceiling for a manager upload (S06). Streaming is unaffected by it.
   MEDIA_MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(10_000).default(200),
+
+  // Recording summaries (migration 0009). A trainee presses "Summarise" under
+  // the player, the server asks a model to summarise that recording's
+  // TRANSCRIPT, and the answer is stored on the recording and served to
+  // everybody afterwards: one model call per recording, ever.
+  //
+  // All four are OPTIONAL and the flag defaults to false, so an environment
+  // that says nothing about any of this starts perfectly and the endpoint
+  // reports the feature as off. That is deliberate: the academy is live.
+  //
+  // The endpoint is Ollama-shaped (POST <base>/api/chat). SUMMARY_MODEL_URL is
+  // the BASE, without /api: http://127.0.0.1:11434, not .../api/chat.
+  ACADEMY_CALL_SUMMARY: bool.default('false'),
+  SUMMARY_MODEL_URL: z.string().url().optional(),
+  SUMMARY_MODEL_NAME: z.string().min(1).optional(),
+  // A local model on a busy box can take a while over a long call. The default
+  // is generous; the endpoint holds one database connection while it waits, so
+  // it is not unbounded either.
+  SUMMARY_MODEL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(120_000),
 })
   .superRefine((cfg, ctx) => {
     if (cfg.NODE_ENV === 'production' && cfg.REDIS_URL === undefined) {
@@ -101,6 +130,34 @@ const ConfigSchema = DbSettingsSchema.extend({
     }
     if (cfg.CRM_AUTH_MODE === 'http' && cfg.CRM_AUTH_KEY === undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['CRM_AUTH_KEY'], message: 'required' });
+    }
+    // Optional, but required TOGETHER — the same shape as CRM_AUTH_MODE and
+    // CRM_AUTH_KEY above. Switching the summary flag on without an endpoint and
+    // a model name would leave a button that fails on every press, and the only
+    // clue would be a 502 in somebody's browser. Refuse to start instead.
+    if (cfg.ACADEMY_CALL_SUMMARY) {
+      for (const name of ['SUMMARY_MODEL_URL', 'SUMMARY_MODEL_NAME'] as const) {
+        if (cfg[name] === undefined) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: 'required' });
+        }
+      }
+    }
+    // The transcript of a real client call is sent in the body of this request.
+    // Over plain http, on a wire that leaves the machine, that is the call in
+    // clear. A model on this same box (127.0.0.1 / ::1 / localhost) never puts
+    // it on a wire at all, so http is fine there and is in fact the normal way
+    // to reach a local Ollama; anything else in production must be https.
+    if (cfg.NODE_ENV === 'production' && cfg.SUMMARY_MODEL_URL !== undefined) {
+      const url = safeUrl(cfg.SUMMARY_MODEL_URL);
+      const host = url?.hostname ?? '';
+      const loopback = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+      if (url !== null && url.protocol !== 'https:' && !loopback) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['SUMMARY_MODEL_URL'],
+          message: 'invalid',
+        });
+      }
     }
     // In production both of these must be https, and for different reasons.
     //
@@ -144,6 +201,12 @@ const HINTS: Record<string, string> = {
     'an absolute path to the media folder, outside the repo and outside the website folder',
   MEDIA_MAX_UPLOAD_MB: 'a whole number of megabytes',
   ACADEMY_NOTIFY_MODE: "'shadow', 'log' or 'off' (no provider chosen yet, so no 'send')",
+  ACADEMY_CALL_SUMMARY: "'true' or 'false'; needs SUMMARY_MODEL_URL and SUMMARY_MODEL_NAME",
+  SUMMARY_MODEL_URL:
+    'the BASE URL of the model API without /api (e.g. http://127.0.0.1:11434);' +
+    ' https:// in production unless it is on this machine',
+  SUMMARY_MODEL_NAME: 'the model to ask, as the endpoint names it',
+  SUMMARY_MODEL_TIMEOUT_MS: 'milliseconds, between 1000 and 600000',
   NODE_ENV: 'development, test or production',
 };
 

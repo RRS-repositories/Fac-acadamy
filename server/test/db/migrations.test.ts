@@ -1,4 +1,4 @@
-// Integration test: applies 0000-0008 to a THROW-AWAY database and checks the
+// Integration test: applies 0000-0009 to a THROW-AWAY database and checks the
 // result. Runs only when MIGRATION_TEST_DB_NAME is set (CI and the local test
 // database set it). It DROPS the academy schema in that database: never point
 // it at anything that matters.
@@ -52,7 +52,7 @@ function tablesCreatedIn(filename: string): string[] {
 
 const quiet = () => undefined;
 
-describe.skipIf(!TEST_DB)('migrations 0000-0008 on a fresh database', () => {
+describe.skipIf(!TEST_DB)('migrations 0000-0009 on a fresh database', () => {
   let settings: DbSettings;
   let client: pg.Client;
 
@@ -91,6 +91,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0008 on a fresh database', () => {
       '0006_notifications.sql',
       '0007_certificates.sql',
       '0008_listen_budget.sql',
+      '0009_call_summary.sql',
     ]);
   });
 
@@ -265,6 +266,81 @@ describe.skipIf(!TEST_DB)('migrations 0000-0008 on a fresh database', () => {
     expect(rows[0]).toEqual({ sel: true, ins: true, upd: true });
   });
 
+  it('adds the three summary columns to call_recordings, all nullable (0009)', async () => {
+    const { rows } = await client.query<{
+      column_name: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>(
+      `SELECT column_name, is_nullable, column_default FROM information_schema.columns
+        WHERE table_schema = 'academy' AND table_name = 'call_recordings'
+          AND column_name IN ('summary', 'summary_model', 'summary_at')
+        ORDER BY column_name`,
+    );
+    expect(rows.map((r) => r.column_name)).toEqual(['summary', 'summary_at', 'summary_model']);
+    // "No summary yet" is the normal state of every recording, and for one that
+    // will never be transcribed it is the only state there will ever be. A
+    // DEFAULT on summary_at would make a row with no summary look like one.
+    for (const row of rows) {
+      expect(row.is_nullable, row.column_name).toBe('YES');
+      expect(row.column_default, row.column_name).toBeNull();
+    }
+  });
+
+  it('will not let a summary be stored without its model and its time (0009)', async () => {
+    await client.query('BEGIN');
+    try {
+      const recording = await client.query<{ id: string }>(
+        `INSERT INTO call_recordings (category, title, media_key, duration_secs)
+         VALUES ('INDUCTION', 'Summary constraint check', 'academy/media/summary.mp3', 30)
+         RETURNING id`,
+      );
+      const id = recording.rows[0]!.id;
+
+      // Half a summary is refused: it could never be traced to what wrote it.
+      // A blank one is refused too, so "there is a summary" can never mean an
+      // empty string the API would then serve as the answer.
+      for (const half of [
+        "summary = 'A summary.'",
+        "summary = 'A summary.', summary_model = 'a-model'",
+        'summary_at = now()',
+        "summary = '   ', summary_model = 'a-model', summary_at = now()",
+      ]) {
+        await client.query('SAVEPOINT half');
+        await expect(
+          client.query(`UPDATE call_recordings SET ${half} WHERE id = $1`, [id]),
+        ).rejects.toThrow(/call_recordings_summary_complete/);
+        await client.query('ROLLBACK TO SAVEPOINT half');
+      }
+
+      // All three together is accepted, and so is clearing all three again.
+      await client.query(
+        `UPDATE call_recordings
+            SET summary = $2, summary_model = $3, summary_at = now() WHERE id = $1`,
+        [id, 'A summary.', 'a-model'],
+      );
+      await client.query(
+        `UPDATE call_recordings
+            SET summary = NULL, summary_model = NULL, summary_at = NULL WHERE id = $1`,
+        [id],
+      );
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('leaves academy_app able to UPDATE call_recordings, which 0009 needs (0009)', async () => {
+    const role = await client.query("SELECT 1 FROM pg_roles WHERE rolname = 'academy_app'");
+    if (role.rowCount === 0) return; // role could not be created here
+    const { rows } = await client.query<{ sel: boolean; upd: boolean }>(
+      `SELECT has_table_privilege('academy_app', 'academy.call_recordings', 'SELECT') AS sel,
+              has_table_privilege('academy_app', 'academy.call_recordings', 'UPDATE') AS upd`,
+    );
+    // Until 0009 the app only ever READ this table. Without the UPDATE the
+    // button would call the model, spend the time, and fail on the save.
+    expect(rows[0]).toEqual({ sel: true, upd: true });
+  });
+
   it('creates every table named in 0001 (19) and the 0002 tables', async () => {
     const from0001 = tablesCreatedIn('0001_academy_schema.sql');
     expect(from0001).toHaveLength(19);
@@ -340,7 +416,7 @@ describe.skipIf(!TEST_DB)('migrations 0000-0008 on a fresh database', () => {
   it('applies nothing on a second run', async () => {
     const res = await applyMigrations({ commit: true, expectDb: TEST_DB, settings, log: quiet });
     expect(res.applied).toEqual([]);
-    expect(res.appliedBefore).toBe(9);
+    expect(res.appliedBefore).toBe(10);
   });
 
   it('dry run on an up-to-date database lists 0 pending', async () => {

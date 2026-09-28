@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-// Media contract (S06): proof of a full listen, and the manager upload result.
+// Media contract (S06): proof of a full listen, the manager upload result, and
+// the one saved summary of what was said on a recording.
 //
 // There is no S3 (user decision, 23 Sep): media lives on local disk behind
 // `GET /api/media/:recordingId/stream`, which is gate-checked like every other
@@ -66,6 +67,67 @@ export const MediaProgressResponseSchema = z.object({
 });
 export type MediaProgressResponse = z.infer<typeof MediaProgressResponseSchema>;
 
+// ---------------------------------------------------------------------------
+// The one saved summary of a recording (migration 0009)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the server knows about a recording's summary right now.
+ *
+ *   disabled       the feature is switched off, or no model is configured. The
+ *                  client shows nothing at all; there is no button.
+ *   no_transcript  the recording has not been transcribed, so there is nothing
+ *                  to summarise. Transcription is separate, later work: today
+ *                  this is the state of every recording. The button is shown
+ *                  but does nothing, and it says why — it must never pretend.
+ *   ready          there is a transcript and no summary: pressing will make one.
+ *   working        somebody else pressed it a moment ago and the model is
+ *                  answering them. The second press does NOT start a second
+ *                  model call; it says "one is being written" and can be tried
+ *                  again. One model call per recording, ever, is the point.
+ *   done           there is a saved summary, and `summary` holds it.
+ */
+export const RECORDING_SUMMARY_STATES = [
+  'disabled',
+  'no_transcript',
+  'ready',
+  'working',
+  'done',
+] as const;
+export type RecordingSummaryState = (typeof RECORDING_SUMMARY_STATES)[number];
+
+/**
+ * GET  /api/media/:recordingId/summary — what state it is in. Never calls a model.
+ * POST /api/media/:recordingId/summary — the saved summary if there is one, and
+ *      otherwise: generate it, save it, return it.
+ *
+ * Both answer with this same shape, so the client has one reader. The summary is
+ * a property of the RECORDING, not of the trainee: the first person to press the
+ * button pays for the model call and everybody after them is served the stored
+ * text.
+ *
+ * `summary` is a summary of WHAT WAS SAID ON THE CALL, made from the transcript.
+ * It is not lesson content and it is not a mark: nothing here judges how the
+ * agent performed, on purpose (that is a manager's job, and putting a model's
+ * opinion of a colleague in front of trainees would be unfair).
+ */
+export const RecordingSummaryResponseSchema = z.object({
+  recordingId: z.number().int(),
+  state: z.enum(RECORDING_SUMMARY_STATES),
+  /** The saved text. Non-null only when `state` is 'done'. */
+  summary: z.string().nullable(),
+  /** Which model wrote it, as recorded with the summary. Null until then. */
+  model: z.string().nullable(),
+  /** ISO timestamp of when it was written. Null until then. */
+  generatedAt: z.string().nullable(),
+});
+export type RecordingSummaryResponse = z.infer<typeof RecordingSummaryResponseSchema>;
+
+/** The summary URL for a recording. One spelling, used by the client and tests. */
+export function recordingSummaryPath(recordingId: number | string): string {
+  return `/api/media/${encodeURIComponent(String(recordingId))}/summary`;
+}
+
 /** POST /api/manager/recordings (manager only) — what the upload created. */
 export const ManagerUploadResponseSchema = z.object({
   recordingId: z.number().int(),
@@ -85,6 +147,9 @@ export const MEDIA_ERROR_CODES = [
   'too_large', // 413 upload over the size limit
   'unsupported_type', // 415 upload is not an accepted audio or video type
   'rate_limited', // 429 too many beacons or uploads
+  // 502 the summary model could not be reached, failed, or took too long.
+  // NOTHING was saved, so the button can honestly be pressed again.
+  'summary_failed',
 ] as const;
 export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
 export const MediaErrorSchema = z.object({ error: z.enum(MEDIA_ERROR_CODES) });
