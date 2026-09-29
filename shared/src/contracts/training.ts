@@ -45,6 +45,31 @@ export type TrackStage = z.infer<typeof TrackStageSchema>;
  * GET /api/track. A trainee with no track yet (D13) gets
  * `{ track: null, waitingForTrack: true, stages: [] }`.
  */
+/**
+ * What the trainee has already finished here, and whether it has changed size
+ * since (migration 0013).
+ *
+ * An academy can grow. Admin went from two modules to three, and the people
+ * who had already finished it would otherwise just find themselves at "2 of 3"
+ * with no explanation. These three facts are what lets the dashboard say
+ * plainly what happened, and they are decided by the SERVER: the browser is
+ * never asked to work out whether something has grown, only to draw it.
+ *
+ * `completedCount` is null when the completion predates 0013 and its scope
+ * could not be inferred — unknown, not zero. `grownSince` is false whenever it
+ * cannot be told, so the trainee is never shown a claim we cannot stand up.
+ */
+const CompletionScopeShape = {
+  /** ISO-8601 of the FIRST completion, or null if they have not finished it. */
+  completedAt: z.string().nullable().default(null),
+  /** How many stages/modules that completion covered. Null = not known. */
+  completedCount: z.number().int().nullable().default(null),
+  /** How many it would cover today, for this trainee's track. */
+  currentCount: z.number().int().default(0),
+  /** True when they finished it and it has gained something since. */
+  grownSince: z.boolean().default(false),
+};
+
 /** Level and department headings, as worded in the approved prototype. */
 export const TrackLevelSchema = z.object({
   level: z.number().int(),
@@ -52,6 +77,7 @@ export const TrackLevelSchema = z.object({
   weeks: z.string().nullable(),
   accomplishment: z.string(),
   description: z.string().nullable(),
+  ...CompletionScopeShape,
 });
 export type TrackLevel = z.infer<typeof TrackLevelSchema>;
 
@@ -61,6 +87,7 @@ export const TrackDeptSchema = z.object({
   icon: z.string().nullable(),
   accomplishment: z.string().nullable(),
   description: z.string().nullable(),
+  ...CompletionScopeShape,
 });
 export type TrackDept = z.infer<typeof TrackDeptSchema>;
 

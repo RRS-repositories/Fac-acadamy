@@ -71,13 +71,18 @@ export function levelCompleteMessage(facts: LevelFacts, to: Recipient[]): Notifi
   };
 }
 
+// "every module", not "both modules": a department academy is however many
+// modules its track shows, which is what completeDeptIfDone() counts. The
+// prototype gave every department two; the Admin academy has had three since
+// the content pack of 29 Sep, and this line is read by a manager about a real
+// person, so it must not assert a number it does not know.
 export function deptCompleteMessage(facts: DeptFacts, to: Recipient[]): NotificationMessage {
   return {
     kind: NOTIFICATION_KINDS.deptComplete,
     to,
     subject: `${facts.fullName} has finished the ${facts.deptLabel} academy`,
     body:
-      `${facts.fullName} has passed both modules of the ${facts.deptLabel} department academy.` +
+      `${facts.fullName} has passed every module of the ${facts.deptLabel} department academy.` +
       `\n\nFAC Academy`,
     refs: { traineeId: facts.traineeId, ref: `dept-${facts.deptCode}`, track: facts.trackCode },
   };

@@ -251,7 +251,7 @@ async function main(): Promise<number> {
     console.log(`Database: ${currentDb} (expected ${expectDb})`);
     add('0', 'Connected to the expected database', currentDb === expectDb, currentDb);
 
-    const stages = await q<StageRow>(`
+    const allStages = await q<StageRow>(`
       SELECT s.id::text, s.code, s.title, s.blurb, s.dept, s.display_num, s.position, s.track,
              s.pass_mark, s.is_exam, l.level_number, l.default_pass_mark,
              z.pass_mark AS quiz_pass_mark
@@ -259,26 +259,26 @@ async function main(): Promise<number> {
         LEFT JOIN academy.levels l ON l.id = s.level_id
         LEFT JOIN academy.quizzes z ON z.stage_id = s.id
        ORDER BY s.id`);
-    const lessons = await q<LessonRow>(`
+    const allLessons = await q<LessonRow>(`
       SELECT stage_id::text, position, title, body_html
         FROM academy.lessons ORDER BY stage_id, position`);
-    const questions = await q<QuestionRow>(`
+    const allQuestions = await q<QuestionRow>(`
       SELECT qn.id::text, z.stage_id::text, qn.position, qn.prompt, qn.source,
              qn.approval_state, qn.is_active
         FROM academy.questions qn
         JOIN academy.quizzes z ON z.id = qn.quiz_id
        ORDER BY z.stage_id, qn.position NULLS LAST, qn.id`);
-    const options = await q<OptionRow>(`
+    const allOptions = await q<OptionRow>(`
       SELECT question_id::text, position, body, is_correct
         FROM academy.question_options ORDER BY question_id, position`);
-    const statusRows = await q<StatusRow>(`
+    const allStatusRows = await q<StatusRow>(`
       SELECT status, client_line, sort FROM academy.status_guide ORDER BY sort`);
-    const recordings = await q<RecordingRow>(`
+    const allRecordings = await q<RecordingRow>(`
       SELECT code, stage_id::text, category, title, description, media_key, duration_secs,
              media_type, position, is_active
         FROM academy.call_recordings
        ORDER BY stage_id NULLS LAST, position NULLS LAST, id`);
-    const visibility = await q<VisibilityRow>(`
+    const allVisibility = await q<VisibilityRow>(`
       SELECT tv.track_code, tv.position, s.code
         FROM academy.track_visibility tv
         JOIN academy.stages s ON s.id = tv.stage_id
@@ -288,14 +288,90 @@ async function main(): Promise<number> {
         FROM academy.levels ORDER BY level_number`);
     const departments = await q<Record<string, unknown>>(`
       SELECT code, label, accomplishment, sort FROM academy.departments ORDER BY sort`);
-    const quizzes = await q<Record<string, unknown>>(`
+    const allQuizzes = await q<{ code: string } & Record<string, unknown>>(`
       SELECT s.code, z.pass_mark, z.question_count, z.shuffle
         FROM academy.quizzes z JOIN academy.stages s ON s.id = z.stage_id ORDER BY s.code`);
 
-    const stageById = new Map(stages.map((s) => [s.id, s]));
-    const stageByCode = new Map(stages.map((s) => [s.code, s]));
+    const stageById = new Map(allStages.map((s) => [s.id, s]));
     const codeOf = (id: string | null): string =>
       id === null ? '(none)' : (stageById.get(id)?.code ?? `?${id}`);
+
+    // -----------------------------------------------------------------------
+    // Scope every list below to the rows the PROTOTYPE owns
+    // -----------------------------------------------------------------------
+    //
+    // This file is the prototype's independent verifier and nothing else. The
+    // schema is shared with content the prototype never described:
+    //   * a content pack seeded by ops/seed/seed-pack-content.ts (its own
+    //     stages, lessons, quiz and track_visibility rows);
+    //   * AI-drafted questions, which 0003 allows with position IS NULL so they
+    //     "never collide" with the seed's;
+    //   * recordings the media pipeline has put into "coming soon" slots.
+    // Whole-table counts would report every one of those as a defect in the
+    // prototype seed. They are not: the prototype's extent is its stage codes,
+    // and within each stage the positions its own parse defines.
+    //
+    // Everything outside that extent is counted once, reported as context, and
+    // then left out of every check. The fingerprint (g) is built from the
+    // scoped lists too, so it stays comparable across databases that hold
+    // different amounts of non-prototype content.
+    const protoStageCodes = new Set(proto.stages.map((s) => s.id));
+    const protoLessonCount = new Map(proto.stages.map((s) => [s.id, s.lessons.length]));
+    const protoQuizCount = new Map(proto.stages.map((s) => [s.id, s.quiz.length]));
+    const protoOptionCount = new Map(
+      proto.stages.flatMap((s) => s.quiz.map((qz, i) => [`${s.id}#${i + 1}`, qz.options.length])),
+    );
+    const protoRecordingCode = new Set(
+      proto.stages.flatMap((s) => s.recordings.map((_, i) => `${s.id}-rec${i + 1}`)),
+    );
+    const protoStatus = new Set(proto.statusGuide.map((g) => g.status));
+    const ownsStage = (id: string | null): boolean => protoStageCodes.has(codeOf(id));
+
+    const stages = allStages.filter((s) => protoStageCodes.has(s.code));
+    const stageByCode = new Map(stages.map((s) => [s.code, s]));
+    const lessons = allLessons.filter(
+      (l) => ownsStage(l.stage_id) && l.position <= (protoLessonCount.get(codeOf(l.stage_id)) ?? 0),
+    );
+    const questions = allQuestions.filter(
+      (x) =>
+        ownsStage(x.stage_id) &&
+        x.position !== null &&
+        x.position <= (protoQuizCount.get(codeOf(x.stage_id)) ?? 0),
+    );
+    const questionIds = new Set(questions.map((x) => x.id));
+    const questionPosition = new Map(
+      questions.map((x) => [x.id, `${codeOf(x.stage_id)}#${x.position ?? 0}`]),
+    );
+    const options = allOptions.filter(
+      (o) =>
+        questionIds.has(o.question_id) &&
+        o.position <= (protoOptionCount.get(questionPosition.get(o.question_id) ?? '') ?? 0),
+    );
+    const statusRows = allStatusRows.filter((r) => protoStatus.has(r.status));
+    const recordings = allRecordings.filter(
+      (r) => r.code !== null && protoRecordingCode.has(r.code),
+    );
+    const visibility = allVisibility.filter((v) => protoStageCodes.has(v.code));
+    const quizzes = allQuizzes.filter((z) => protoStageCodes.has(z.code));
+
+    const otherSource = {
+      stages: allStages.length - stages.length,
+      lessons: allLessons.length - lessons.length,
+      questions: allQuestions.length - questions.length,
+      options: allOptions.length - options.length,
+      statusRows: allStatusRows.length - statusRows.length,
+      recordings: allRecordings.length - recordings.length,
+      visibility: allVisibility.length - visibility.length,
+    };
+    const otherSummary = Object.entries(otherSource)
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => `${k} ${n}`)
+      .join(', ');
+    console.log(
+      `\nRows not from the prototype (counted, then ignored by every check below): ` +
+        `${otherSummary === '' ? 'none' : otherSummary}`,
+    );
+
     const lessonsByStage = groupBy(lessons, (l) => codeOf(l.stage_id));
     const questionsByStage = groupBy(questions, (x) => codeOf(x.stage_id));
     const optionsByQuestion = groupBy(options, (o) => o.question_id);
@@ -303,18 +379,17 @@ async function main(): Promise<number> {
 
     // ---- a. stages ------------------------------------------------------------
     const protoCodes = proto.stages.map((s) => s.id);
-    const dbCodes = stages.map((s) => s.code);
     const missing = protoCodes.filter((c) => !stageByCode.has(c));
-    const extra = dbCodes.filter((c) => !protoCodes.includes(c));
+    // Stages from another content source: named, never counted as a defect.
+    const other = allStages.map((s) => s.code).filter((c) => !protoStageCodes.has(c));
     add(
       'a',
-      'Stage count DB == prototype (== fixture)',
+      'Stage count DB == prototype (== fixture), ignoring stages from another source',
       stages.length === proto.stages.length &&
         stages.length === fixture.counts.stages &&
-        missing.length === 0 &&
-        extra.length === 0,
+        missing.length === 0,
       `DB ${stages.length}, prototype ${proto.stages.length}, fixture ${fixture.counts.stages}` +
-        `; missing [${missing.join(' ')}] extra [${extra.join(' ')}]`,
+        `; missing [${missing.join(' ')}] other source [${other.join(' ')}]`,
     );
     const metaDiffs: string[] = [];
     for (const ps of proto.stages) {
@@ -495,7 +570,11 @@ async function main(): Promise<number> {
       const dbList = (visByTrack.get(t) ?? []).map((v) => v.code);
       const protoList = proto.visibleStageIds(t);
       const fixList = fixture.tracks[t];
-      const positionsOk = (visByTrack.get(t) ?? []).every((v, i) => v.position === i + 1);
+      // Strictly increasing, not dense 1..n: a stage another content source
+      // slotted into this track legitimately occupies a position in between,
+      // and gate() unlocks on the ORDER of the rows, never on the number.
+      const dbPositions = (visByTrack.get(t) ?? []).map((v) => v.position);
+      const positionsOk = dbPositions.every((n, i) => i === 0 || n > (dbPositions[i - 1] ?? 0));
       const same = sameList(dbList, protoList) && sameList(protoList, fixList);
       const dbQ = dbList.reduce((n, c) => n + (questionsByStage.get(c)?.length ?? 0), 0);
       const qOk = dbQ === fixture.questionsPerTrack[t];
@@ -507,7 +586,7 @@ async function main(): Promise<number> {
         protoList.length,
         fixList.length,
         same ? 0 : 'DIFF',
-        positionsOk ? '1..n' : 'GAPS',
+        positionsOk ? 'in order' : 'OUT OF ORDER',
         dbQ,
         fixture.questionsPerTrack[t],
       ]);
@@ -527,7 +606,7 @@ async function main(): Promise<number> {
     );
     add(
       'e1',
-      'track_visibility: 9 tracks, DB == prototype == fixture, ordered, zero diff',
+      'track_visibility: 9 tracks, prototype stages == prototype == fixture, in order, zero diff',
       visOk && extraTracks.length === 0,
       `${visTable.filter((r) => r[4] === 0).length}/9 tracks identical; ${visibility.length} rows` +
         (extraTracks.length ? `; unexpected tracks ${extraTracks.join(' ')}` : ''),
@@ -540,27 +619,53 @@ async function main(): Promise<number> {
     );
 
     // ---- f. recordings ---------------------------------------------------------
-    const withKey = recordings.filter((r) => r.media_key !== null);
-    const withoutKey = recordings.filter((r) => r.media_key === null);
+    //
+    // A slot the prototype calls "coming soon" can since have been filled by
+    // ops/media/ingest-media.ts, which is the sanctioned way to put a recording
+    // into the academy. The file it stored, the duration it probed and the type
+    // it read off the file are not the prototype's to describe, so a filled slot
+    // is counted and then left out of the comparison. What stays checked is what
+    // the prototype does own: that all 48 of its slots exist, in order, with its
+    // titles and descriptions, and that each of the 7 files it carries is wired
+    // to exactly one slot.
     const protoRecTotal = proto.stages.reduce((n, s) => n + s.recordings.length, 0);
     const protoWithMedia = proto.stages.reduce(
       (n, s) => n + s.recordings.filter((r) => r.mediaFile !== null).length,
       0,
     );
+    /** The prototype's own media slots: code -> the key the prototype names. */
+    const protoSlotKey = new Map<string, string>(
+      proto.stages.flatMap((s) =>
+        s.recordings.flatMap((r, i): [string, string][] =>
+          r.mediaFile === null ? [] : [[`${s.id}-rec${i + 1}`, MEDIA_PREFIX + r.mediaFile]],
+        ),
+      ),
+    );
+    /** Slots the media pipeline has taken over: filled, or re-keyed away from the prototype's. */
+    const pipelineOwned = new Set(
+      recordings
+        .filter((r) => r.media_key !== null && r.media_key !== protoSlotKey.get(r.code ?? ''))
+        .map((r) => r.code ?? ''),
+    );
+    const protoOwnMedia = recordings.filter(
+      (r) => protoSlotKey.has(r.code ?? '') && !pipelineOwned.has(r.code ?? ''),
+    );
     add(
       'f1',
-      'Recording slots: 48 total, 7 with media_key, 41 NULL',
+      `Recording slots: ${protoRecTotal} prototype slots, ${protoWithMedia} carrying prototype media`,
       recordings.length === protoRecTotal &&
         recordings.length === fixture.counts.recordings &&
-        withKey.length === protoWithMedia &&
-        withKey.length === fixture.counts.recordingsWithMedia &&
-        withoutKey.length === fixture.counts.recordings - fixture.counts.recordingsWithMedia,
-      `DB ${recordings.length} (with media_key ${withKey.length}, NULL ${withoutKey.length}); ` +
-        `prototype ${protoRecTotal} (with media ${protoWithMedia}); ` +
-        `fixture ${fixture.counts.recordings} (${fixture.counts.recordingsWithMedia})`,
+        protoWithMedia === fixture.counts.recordingsWithMedia &&
+        protoOwnMedia.every((r) => r.media_key !== null) &&
+        protoOwnMedia.length + pipelineOwned.size >= protoWithMedia,
+      `DB ${recordings.length} prototype slots; prototype ${protoRecTotal} ` +
+        `(fixture ${fixture.counts.recordings}); prototype media ${protoWithMedia} ` +
+        `(fixture ${fixture.counts.recordingsWithMedia}), of which ` +
+        `${protoOwnMedia.filter((r) => r.media_key !== null).length} still carry the prototype key; ` +
+        `slots the media pipeline owns ${pipelineOwned.size}`,
     );
     const keyCounts = new Map<string, number>();
-    for (const r of withKey)
+    for (const r of protoOwnMedia)
       keyCounts.set(r.media_key ?? '', (keyCounts.get(r.media_key ?? '') ?? 0) + 1);
     // The embedded MEDIA keys (audio) plus any external file a slot names (the FOS video).
     const slotMedia = proto.stages.flatMap((s) =>
@@ -568,7 +673,15 @@ async function main(): Promise<number> {
     );
     const allMedia = [...new Set([...proto.mediaFiles, ...slotMedia])];
     const unusedEmbedded = proto.mediaFiles.filter((f) => !slotMedia.includes(f));
-    const mediaNotOnce = allMedia.filter((f) => keyCounts.get(MEDIA_PREFIX + f) !== 1);
+    // A file whose only slot the pipeline has re-keyed is out of scope, not missing.
+    const takenOver = new Set(
+      [...protoSlotKey.entries()]
+        .filter(([code]) => pipelineOwned.has(code))
+        .map(([, key]) => key.slice(MEDIA_PREFIX.length)),
+    );
+    const mediaNotOnce = allMedia.filter(
+      (f) => !takenOver.has(f) && keyCounts.get(MEDIA_PREFIX + f) !== 1,
+    );
     const strayKeys = [...keyCounts.keys()].filter(
       (k) => !allMedia.some((f) => MEDIA_PREFIX + f === k),
     );
@@ -576,22 +689,28 @@ async function main(): Promise<number> {
       'f2',
       `Every prototype media file appears exactly once as ${MEDIA_PREFIX}<file>`,
       mediaNotOnce.length === 0 && strayKeys.length === 0 && unusedEmbedded.length === 0,
-      `${allMedia.length - mediaNotOnce.length}/${allMedia.length} media files exactly once ` +
+      `${allMedia.length - mediaNotOnce.length - takenOver.size}/${allMedia.length - takenOver.size} media files exactly once ` +
         `(${proto.mediaFiles.length} embedded + ${allMedia.length - proto.mediaFiles.length} external); ` +
         `not once ${mediaNotOnce.length}, keys not in prototype ${strayKeys.length}, ` +
-        `embedded but unused ${unusedEmbedded.length}`,
+        `embedded but unused ${unusedEmbedded.length}, re-keyed by the media pipeline ${takenOver.size}`,
     );
     let slotDiffs = 0;
     const slotDiffStages: string[] = [];
+    let slotsSkipped = 0;
     for (const ps of proto.stages) {
       const dbr = recordingsByStage.get(ps.id) ?? [];
       const ok =
         dbr.length === ps.recordings.length &&
         ps.recordings.every((pr, i) => {
           const d = dbr[i];
+          if (d === undefined) return false;
+          // Filled by the media pipeline: its title, key, duration and type win.
+          if (pipelineOwned.has(d.code ?? '')) {
+            slotsSkipped += 1;
+            return true;
+          }
           const key = pr.mediaFile === null ? null : MEDIA_PREFIX + pr.mediaFile;
           return (
-            d !== undefined &&
             d.title === pr.title &&
             (d.description ?? '') === pr.description &&
             d.media_key === key &&
@@ -608,7 +727,8 @@ async function main(): Promise<number> {
       'f3',
       'Recording slots per stage: order, title, description, media key and type match the prototype',
       slotDiffs === 0 && unassigned === 0,
-      `${proto.stages.length - slotDiffs}/${proto.stages.length} stages match; unassigned ${unassigned}` +
+      `${proto.stages.length - slotDiffs}/${proto.stages.length} stages match; unassigned ${unassigned}; ` +
+        `slots owned by the media pipeline and skipped ${slotsSkipped}` +
         (slotDiffStages.length ? `; differ: ${slotDiffStages.join(' ')}` : ''),
     );
 
@@ -790,10 +910,12 @@ async function main(): Promise<number> {
     }
     // Positive control: every canary must be present in the seeded content, or the scan
     // above proves nothing.
+    // Unscoped on purpose: a canary taken from content a pack seeded is still a
+    // canary, and the scan above must be shown to be capable of finding it.
     const seededText = [
-      ...lessons.map((l) => l.body_html),
-      ...options.map((o) => o.body),
-      ...statusRows.map((r) => r.client_line),
+      ...allLessons.map((l) => l.body_html),
+      ...allOptions.map((o) => o.body),
+      ...allStatusRows.map((r) => r.client_line),
     ].join('\n');
     const live = new Set(leak.findCanaries(seededText, canaries));
     const dead = canaries.filter((c) => !live.has(c.label)).map((c) => c.label);

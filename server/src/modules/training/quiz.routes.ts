@@ -290,7 +290,7 @@ export function createQuizRouter(deps: QuizRouterDeps): Router {
       if (outcome.dept !== null) {
         await producers.enqueueDeptNotify({
           traineeId,
-          dept: outcome.dept,
+          dept: outcome.dept.dept,
           track: allowed.track,
         });
       }
@@ -304,7 +304,7 @@ export function createQuizRouter(deps: QuizRouterDeps): Router {
         traineeId,
         track: allowed.track,
         level: outcome.level,
-        dept: outcome.dept,
+        dept: outcome.dept?.dept ?? null,
       });
       if (!result.passed) {
         // Every fail is enqueued; the worker counts the streak against the
@@ -433,9 +433,12 @@ async function submitAttempt(
         dept: allowed.meta.dept,
       });
 
-      // Milestones are audited once, on the attempt that achieved them: a
-      // later retake of an already-passed stage is a QUIZ_SUBMIT, not a
-      // second STAGE_PASS.
+      // Milestones are audited on the attempt that achieved them: a later
+      // retake of an already-passed stage is a QUIZ_SUBMIT, not a second
+      // STAGE_PASS. Since migration 0013 a LEVEL_PASS or DEPT_PASS can be
+      // written a second time — but only when the academy itself has grown and
+      // the trainee has finished the bigger one, which is a new milestone and
+      // deserves its own row. `afterGrowth` in the payload says which it was.
       if (outcome.stageNewlyPassed) {
         await writeAudit(client, {
           traineeId,
@@ -449,7 +452,14 @@ async function submitAttempt(
           traineeId,
           eventType: 'LEVEL_PASS',
           actor: actor.trainee(traineeId),
-          payload: { level: outcome.level.levelNumber, track: allowed.track },
+          payload: {
+            level: outcome.level.levelNumber,
+            track: allowed.track,
+            // How many stages this completion covers, and whether it was
+            // earned after the level grew (migration 0013).
+            stages: outcome.level.stagesCovered,
+            afterGrowth: outcome.level.afterGrowth,
+          },
         });
       }
       if (outcome.dept !== null) {
@@ -457,7 +467,14 @@ async function submitAttempt(
           traineeId,
           eventType: 'DEPT_PASS',
           actor: actor.trainee(traineeId),
-          payload: { dept: outcome.dept, track: allowed.track },
+          payload: {
+            dept: outcome.dept.dept,
+            track: allowed.track,
+            // How much of the academy this completion covers, and whether it
+            // was earned after the academy grew (migration 0013).
+            modules: outcome.dept.modulesCovered,
+            afterGrowth: outcome.dept.afterGrowth,
+          },
         });
       }
     }

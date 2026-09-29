@@ -24,6 +24,14 @@ export interface CertificateRow {
   byteSize: number | null;
   issuedAt: Date;
   revokedAt: Date | null;
+  /**
+   * How many modules (DEPT) or stages (LEVEL) this certificate covers, frozen
+   * at issue (migration 0013). It is what lets a trainee hold the certificate
+   * for the two-module academy and the one for the three-module academy at the
+   * same time, both valid. Null for a TRACK award, and for a certificate
+   * issued before 0013 whose scope could not be inferred.
+   */
+  scopeSize: number | null;
   /** From academy.levels / academy.departments, read now, never stored. */
   title: string;
   accomplishment: string | null;
@@ -42,6 +50,7 @@ interface DbCertificate {
   byte_size: string | null;
   issued_at: Date;
   revoked_at: Date | null;
+  scope_size: number | null;
   level_number: number | null;
   level_name: string | null;
   level_accomplishment: string | null;
@@ -89,6 +98,7 @@ function toRow(row: DbCertificate): CertificateRow {
     byteSize: row.byte_size === null ? null : Number(row.byte_size),
     issuedAt: row.issued_at,
     revokedAt: row.revoked_at,
+    scopeSize: row.scope_size,
     title: titleOf(row),
     accomplishment:
       row.kind === 'LEVEL'
@@ -102,6 +112,7 @@ function toRow(row: DbCertificate): CertificateRow {
 const SELECT_CERTIFICATE = `
   SELECT c.id, c.public_id, c.trainee_id, c.kind, c.level_id, c.dept, c.track_code,
          c.holder_name, c.media_key, c.byte_size, c.issued_at, c.revoked_at,
+         c.scope_size,
          l.level_number, l.name AS level_name, l.accomplishment AS level_accomplishment,
          d.academy_name AS dept_name, d.label AS dept_label,
          d.accomplishment AS dept_accomplishment
@@ -127,25 +138,83 @@ export async function listForTrainee(db: Db, traineeId: number): Promise<Certifi
   return rows.map(toRow);
 }
 
+/** What identifies one certificate: the trainee, the milestone, and its scope. */
+export interface CertificateTarget {
+  traineeId: number;
+  kind: CertKind;
+  levelId: number | null;
+  dept: string | null;
+  /**
+   * The scope the certificate covers (migration 0013). Part of the identity,
+   * not a detail: the certificate for the two-module Admin academy and the one
+   * for the three-module Admin academy are different certificates and both are
+   * valid, so a lookup that ignored this would find the old one and the grown
+   * academy would never be certified.
+   */
+  scopeSize: number | null;
+}
+
 /**
- * The certificate for one milestone, whichever kind it is. `level_id` and
- * `dept` are compared with IS NOT DISTINCT FROM so a NULL matches a NULL —
- * `= NULL` would never match and would issue a second certificate every time.
+ * The certificate for one milestone at one scope. `level_id`, `dept` and
+ * `scope_size` are compared with IS NOT DISTINCT FROM so a NULL matches a NULL
+ * — `= NULL` would never match and would issue a second certificate every
+ * time. The two partial unique indexes from 0013 are declared NULLS NOT
+ * DISTINCT for exactly the same reason, so the lookup and the index agree.
  */
 export async function findForTarget(
   db: Db,
-  target: { traineeId: number; kind: CertKind; levelId: number | null; dept: string | null },
+  target: CertificateTarget,
 ): Promise<CertificateRow | null> {
   const { rows } = await db.query<DbCertificate>(
     `${SELECT_CERTIFICATE}
       WHERE c.trainee_id = $1
         AND c.kind = $2
         AND c.level_id IS NOT DISTINCT FROM $3
-        AND c.dept IS NOT DISTINCT FROM $4`,
-    [target.traineeId, target.kind, target.levelId, target.dept],
+        AND c.dept IS NOT DISTINCT FROM $4
+        AND c.scope_size IS NOT DISTINCT FROM $5`,
+    [target.traineeId, target.kind, target.levelId, target.dept, target.scopeSize],
   );
   const row = rows[0];
   return row === undefined ? null : toRow(row);
+}
+
+/**
+ * How much the completion behind this milestone covers — the number this
+ * certificate is for.
+ *
+ * Read from the completion row rather than counted here on purpose. The
+ * completion rule (modules/training/completions.ts) is the only thing allowed
+ * to decide that an academy is finished and how big it was when it was; if the
+ * issuer counted the modules itself, a certificate job re-driven by hand after
+ * the academy grew again would mint a certificate for work nobody has done.
+ * Reading the recorded scope makes the job safe to re-drive at any time, and
+ * makes the request and the worker agree without talking to each other.
+ *
+ * Null means "unknown, or no completion row", which is a legitimate lookup key
+ * and matches the certificates issued before migration 0013.
+ */
+export async function loadCompletionScope(
+  db: Db,
+  target: { traineeId: number; kind: CertKind; levelId: number | null; dept: string | null },
+): Promise<number | null> {
+  if (target.kind === 'LEVEL' && target.levelId !== null) {
+    const { rows } = await db.query<{ stages_covered: number | null }>(
+      `SELECT stages_covered FROM academy.level_completions
+        WHERE trainee_id = $1 AND level_id = $2`,
+      [target.traineeId, target.levelId],
+    );
+    return rows[0]?.stages_covered ?? null;
+  }
+  if (target.kind === 'DEPT' && target.dept !== null) {
+    const { rows } = await db.query<{ modules_covered: number | null }>(
+      `SELECT modules_covered FROM academy.dept_completions
+        WHERE trainee_id = $1 AND dept = $2`,
+      [target.traineeId, target.dept],
+    );
+    return rows[0]?.modules_covered ?? null;
+  }
+  // A TRACK award covers a whole track: there is no count to record.
+  return null;
 }
 
 /** The holder's name and email, read once at issue and then frozen in the row. */
@@ -176,12 +245,18 @@ export async function findLevelIdByNumber(db: Db, levelNumber: number): Promise<
 }
 
 /**
- * Insert the certificate unless one already exists for this milestone.
+ * Insert the certificate unless one already exists for this milestone at this
+ * scope.
  *
- * The three partial unique indexes from 0002 (one per level, per department,
- * per track) make this safe under concurrency: two requests that complete the
- * same level at the same moment both try, one inserts, the other does nothing
- * and reads the winner back. Returns null when it inserted nothing.
+ * The partial unique indexes make this safe under concurrency: two requests
+ * that complete the same level at the same moment both try, one inserts, the
+ * other does nothing and reads the winner back. Returns null when it inserted
+ * nothing.
+ *
+ * Since 0013 the level and department indexes carry `scope_size` as well, so
+ * finishing a grown academy inserts beside the earlier certificate instead of
+ * colliding with it. `ON CONFLICT DO NOTHING` names no index on purpose — it
+ * covers whichever of them applies, and did so before 0013 too.
  */
 export async function insertCertificate(
   db: Db,
@@ -194,12 +269,14 @@ export async function insertCertificate(
     track: string;
     holderName: string;
     issuedBy: string;
+    scopeSize: number | null;
   },
 ): Promise<{ id: number; publicId: string } | null> {
   const { rows } = await db.query<{ id: string; public_id: string }>(
     `INSERT INTO academy.certificates
-       (public_id, trainee_id, kind, level_id, dept, track_code, holder_name, issued_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (public_id, trainee_id, kind, level_id, dept, track_code, holder_name, issued_by,
+        scope_size)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT DO NOTHING
      RETURNING id, public_id`,
     [
@@ -211,6 +288,7 @@ export async function insertCertificate(
       values.track,
       values.holderName,
       values.issuedBy,
+      values.scopeSize,
     ],
   );
   const row = rows[0];

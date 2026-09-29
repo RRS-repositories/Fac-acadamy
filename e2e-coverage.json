@@ -20,7 +20,7 @@
     "e2e/tests/journey-admin.spec.ts": {
       "tests": 1,
       "reason": "the whole point of it is walking the Admin programme stage by stage in a browser, and a runner has no stages: the content is seeded from the approved prototype HTML, which carries six real client call recordings and real staff names and so can never be committed",
-      "unproven": "the Admin department journey end to end: that a trainee can read the lessons of s6 and dA1 and answer their quizzes question by question in the browser, that finishing the last core stage raises the Level 1 completion banner and issues a certificate that downloads as a real PDF and verifies on the public page, and that finishing the two department modules issues a second, different certificate"
+      "unproven": "the Admin department journey end to end: that a trainee can read the lessons of s6 and dA1 and answer their quizzes question by question in the browser, that finishing the last core stage raises the Level 1 completion banner and issues a certificate that downloads as a real PDF and verifies on the public page, and that working through the Admin department's modules — three of them since the 29 Sep content pack added dA3 between dA1 and dA2 — issues a second, different certificate, and issues it only once the LAST module is passed rather than after the first"
     },
     "e2e/tests/journey-cs.spec.ts": {
       "tests": 1,
@@ -49,7 +49,7 @@
     },
     "e2e/tests/tracks.spec.ts": {
       "tests": 9,
-      "reason": "each test asserts the dashboard's stage list against ops/fixtures/expected-track-visibility.json, and with no stages seeded the page lists nothing on every track",
+      "reason": "each test asserts the dashboard's stage list against ops/fixtures/expected-track-visibility.json — its nine prototype track lists with each content-pack stage inserted after the stage it follows — and with no stages seeded the page lists nothing on every track",
       "unproven": "that each of the nine tracks shows exactly the stages PROJECT-PLAN §1 says it should, in unlock order, on the dashboard AND in the /api/track payload the dashboard was built from; and that on day one the first stage is available and every later one is locked"
     },
     "e2e/tests/ux.spec.ts": {

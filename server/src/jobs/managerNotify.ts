@@ -18,7 +18,7 @@ import type { JobHandler } from '../queues/runtime.js';
 export const MANAGER_NOTIFY_JOBS = {
   /** A trainee finished every visible stage of a level. */
   levelComplete: 'level-complete',
-  /** A trainee finished both modules of their department academy. */
+  /** A trainee finished every module of their department academy. */
   deptComplete: 'dept-complete',
   /** A trainee just failed a stage quiz; the handler checks for a streak. */
   stageFail: 'stage-fail',

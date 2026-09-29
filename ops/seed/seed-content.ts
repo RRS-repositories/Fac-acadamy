@@ -72,6 +72,105 @@ export const recordingCode = (stageId: string, position: number): string =>
 export const mediaKeyFor = (file: string): string => `academy/media/${file}`;
 
 // ---------------------------------------------------------------------------
+// Sharing the schema with content the prototype does not own
+// ---------------------------------------------------------------------------
+//
+// The prototype is not the only content source any more: ops/seed/seed-pack-content.ts
+// loads a content pack from outside the repo, and S08's question generator writes
+// questions with position IS NULL. This seed owns exactly the rows its own parse
+// defines and must leave the rest alone — not only "never delete", but never
+// renumber and never count either. Two things follow.
+//
+// 1. Positions. `stages.position` (inside a level or a department) and
+//    `track_visibility.position` are both UNIQUE, so writing 1..n blindly would
+//    collide with a row another source placed in the middle, and would silently
+//    undo its ordering. Instead the prototype's stages take the next FREE slot,
+//    stepping over whatever is already there. On a database that holds only
+//    prototype content nothing is occupied, so every position is exactly what it
+//    was before: this is a no-op there, which is the point.
+// 2. Counts. verify() and countStale() below compare prototype-owned rows only.
+//    Without that, one extra stage — or one AI-drafted question — makes every
+//    future prototype seed fail a check and roll the whole thing back.
+//
+// None of this needs the 0012 `content_source` column: the prototype's own parse
+// says which rows are its, by key. The column records the same fact in the
+// schema for a human reading the tables.
+
+/** The group a stage is numbered within: its department, else its level. */
+export const groupKey = (dept: string | null, level: number | null): string =>
+  dept ? `D:${dept}` : `L:${level}`;
+
+/** Positions inside each group that stages NOT in `protoCodes` already hold. */
+async function occupiedStagePositions(
+  client: pg.ClientBase,
+  protoCodes: readonly string[],
+): Promise<Map<string, Set<number>>> {
+  const { rows } = await client.query<{ grp: string; position: number }>(
+    `SELECT CASE WHEN s.dept IS NOT NULL THEN 'D:' || s.dept
+                 ELSE 'L:' || COALESCE(l.level_number::text, 'null') END AS grp,
+            s.position
+       FROM academy.stages s
+       LEFT JOIN academy.levels l ON l.id = s.level_id
+      WHERE NOT (s.code = ANY($1::text[]))`,
+    [protoCodes],
+  );
+  return toOccupied(rows.map((r) => [r.grp, Number(r.position)]));
+}
+
+/** Positions in each track that stages NOT in `protoCodes` already hold. */
+async function occupiedVisibilityPositions(
+  client: pg.ClientBase,
+  protoCodes: readonly string[],
+): Promise<Map<string, Set<number>>> {
+  const { rows } = await client.query<{ track_code: string; position: number }>(
+    `SELECT v.track_code, v.position
+       FROM academy.track_visibility v
+       JOIN academy.stages s ON s.id = v.stage_id
+      WHERE NOT (s.code = ANY($1::text[]))`,
+    [protoCodes],
+  );
+  return toOccupied(rows.map((r) => [r.track_code, Number(r.position)]));
+}
+
+function toOccupied(pairs: readonly [string, number][]): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const [key, position] of pairs) {
+    const set = out.get(key);
+    if (set) set.add(position);
+    else out.set(key, new Set([position]));
+  }
+  return out;
+}
+
+/**
+ * Hands out 1, 2, 3 … per key, stepping over positions another content source
+ * holds. With nothing occupied it returns exactly 1, 2, 3 …
+ */
+export function positionAllocator(occupied: Map<string, Set<number>>) {
+  const last = new Map<string, number>();
+  return (key: string): number => {
+    let p = (last.get(key) ?? 0) + 1;
+    while (occupied.get(key)?.has(p) === true) p++;
+    last.set(key, p);
+    return p;
+  };
+}
+
+/**
+ * The badge text for a stage that has been pushed down the list. Every
+ * prototype badge is its own group position written out ('1', '8', 'A2',
+ * 'IT1'), so when the position moves the trailing number moves with it and
+ * nothing else about the string changes. Unrecognised badges are left alone,
+ * and when the position has not moved this returns the prototype's own value.
+ */
+export function badgeForPosition(displayNum: string, protoRank: number, position: number): string {
+  if (protoRank === position) return displayNum;
+  const suffix = String(protoRank);
+  if (!displayNum.endsWith(suffix)) return displayNum;
+  return displayNum.slice(0, -suffix.length) + String(position);
+}
+
+// ---------------------------------------------------------------------------
 // Counters
 // ---------------------------------------------------------------------------
 
@@ -80,7 +179,10 @@ interface Tally {
   inserted: number;
   updated: number;
   unchanged: number;
+  /** Prototype-owned rows the prototype itself no longer has. Reported, never deleted. */
   stale: number;
+  /** Rows that came from somewhere else (a content pack, the question generator). */
+  other: number;
 }
 
 const TABLES = [
@@ -99,7 +201,10 @@ type Table = (typeof TABLES)[number];
 
 function newTallies(): Record<Table, Tally> {
   return Object.fromEntries(
-    TABLES.map((t) => [t, { source: 0, inserted: 0, updated: 0, unchanged: 0, stale: 0 }]),
+    TABLES.map((t) => [
+      t,
+      { source: 0, inserted: 0, updated: 0, unchanged: 0, stale: 0, other: 0 },
+    ]),
   ) as Record<Table, Tally>;
 }
 
@@ -197,14 +302,19 @@ export async function seedContent(
     else t.departments.unchanged++;
   }
 
-  // Position of each stage inside its level or its department.
-  const groupPos = new Map<string, number>();
+  // Position of each stage inside its level or its department, stepping over
+  // any slot content from another source already holds (see the note above).
+  const protoCodes = proto.stages.map((s) => s.id);
+  const nextStagePosition = positionAllocator(await occupiedStagePositions(client, protoCodes));
+  const groupRank = new Map<string, number>();
   const perStage: SeedResult['perStage'] = [];
 
   for (const s of proto.stages) {
-    const group = s.dept ? `D:${s.dept}` : `L:${s.level}`;
-    const position = (groupPos.get(group) ?? 0) + 1;
-    groupPos.set(group, position);
+    const group = groupKey(s.dept, s.level);
+    const protoRank = (groupRank.get(group) ?? 0) + 1;
+    groupRank.set(group, protoRank);
+    const position = nextStagePosition(group);
+    const displayNum = badgeForPosition(s.displayNum, protoRank, position);
     const { track, category } = classifyStage(s, proto);
     const levelId = s.level === null ? null : levelIds.get(s.level);
     if (levelId === undefined) throw new SeedError(`Stage ${s.id}: level ${s.level} not seeded.`);
@@ -226,7 +336,7 @@ export async function seedContent(
              (EXCLUDED.level_id, EXCLUDED.dept, EXCLUDED.display_num, EXCLUDED.position,
               EXCLUDED.sort, EXCLUDED.title, EXCLUDED.blurb, EXCLUDED.track, EXCLUDED.pass_mark)
        RETURNING id, (xmax = 0) AS inserted`,
-      [s.id, levelId, s.dept, s.displayNum, position, s.num, s.title, s.blurb, track, s.passMark],
+      [s.id, levelId, s.dept, displayNum, position, s.num, s.title, s.blurb, track, s.passMark],
       { sql: 'SELECT id FROM academy.stages WHERE code = $1', params: [s.id] },
     );
 
@@ -247,6 +357,18 @@ export async function seedContent(
     }
 
     // Recordings: 'coming soon' slots have no media_key and no duration (0002 X6).
+    //
+    // A slot that ALREADY HOLDS MEDIA is left exactly as it is. Filling a slot
+    // is ops/media/ingest-media.ts's job, and what it writes is not the
+    // prototype's to revise: the file it stored, the duration it probed, the
+    // type it read off the file, and the title the operator gave it. Without
+    // the `media_key IS NULL` guard the next seed silently sets media_key back
+    // to NULL on every slot the prototype calls "coming soon" — in academy_dev
+    // that is 13 real recordings — and re-points the FOS video at the key the
+    // prototype names instead of the content-addressed one on disk.
+    //
+    // A slot is therefore filled once and then owned by the media pipeline. To
+    // hand one back to the seed, clear its media_key first.
     for (const [i, r] of s.recordings.entries()) {
       await upsert(
         client,
@@ -259,7 +381,8 @@ export async function seedContent(
                category = EXCLUDED.category, title = EXCLUDED.title,
                description = EXCLUDED.description, media_key = EXCLUDED.media_key,
                duration_secs = EXCLUDED.duration_secs, media_type = EXCLUDED.media_type
-         WHERE (call_recordings.stage_id, call_recordings.position, call_recordings.category,
+         WHERE call_recordings.media_key IS NULL
+           AND (call_recordings.stage_id, call_recordings.position, call_recordings.category,
                 call_recordings.title, call_recordings.description, call_recordings.media_key,
                 call_recordings.duration_secs, call_recordings.media_type)
                IS DISTINCT FROM
@@ -356,9 +479,15 @@ export async function seedContent(
     );
   }
 
-  // Track visibility from the prototype's own visibleStage(), in unlock order.
+  // Track visibility from the prototype's own visibleStage(), in unlock order,
+  // again stepping over positions another content source holds. gate() unlocks
+  // on array order (ORDER BY v.position), never on the number, so a gap is
+  // harmless — a collision would not be: the UNIQUE key is only deferred to the
+  // end of this transaction, not waived.
+  const nextVisPosition = positionAllocator(await occupiedVisibilityPositions(client, protoCodes));
   for (const track of TRACK_CODES_IN_ORDER) {
-    for (const [i, code] of proto.visibleStageIds(track).entries()) {
+    for (const code of proto.visibleStageIds(track)) {
+      const position = nextVisPosition(track);
       await upsert(
         client,
         t.track_visibility,
@@ -367,7 +496,7 @@ export async function seedContent(
          ON CONFLICT (track_code, stage_id) DO UPDATE SET position = EXCLUDED.position
          WHERE track_visibility.position IS DISTINCT FROM EXCLUDED.position
          RETURNING NULL::bigint AS id, (xmax = 0) AS inserted`,
-        [track, code, i + 1],
+        [track, code, position],
       );
     }
   }
@@ -376,7 +505,14 @@ export async function seedContent(
   return { tallies: t, perStage, checks: await verify(client, proto) };
 }
 
-/** Rows in the DB that the prototype no longer has. Reported, never deleted. */
+/**
+ * Two tallies that the seed reports and never acts on:
+ *   stale  prototype-owned rows the prototype itself no longer has
+ *   other  rows another content source owns (a content pack, the S08 question
+ *          generator's position IS NULL drafts, a manager's recording upload)
+ * Only the first is a sign that something needs tidying. The second is normal,
+ * and is deliberately kept out of every count and every check below.
+ */
 async function countStale(client: pg.ClientBase, proto: PrototypeData, t: Record<Table, Tally>) {
   const codes = proto.stages.map((s) => s.id);
   const n = async (sql: string, params: unknown[]): Promise<number> => {
@@ -394,17 +530,24 @@ async function countStale(client: pg.ClientBase, proto: PrototypeData, t: Record
     'SELECT count(*) AS n FROM academy.departments WHERE NOT (code = ANY($1::text[]))',
     [proto.depts.map((d) => d.code)],
   );
-  t.stages.stale = await n(
+  // A stage the prototype does not name is another source's, not a stale one:
+  // stage codes are the prototype's own identifiers and it never abandons them.
+  t.stages.other = await n(
     'SELECT count(*) AS n FROM academy.stages WHERE NOT (code = ANY($1::text[]))',
     [codes],
   );
   t.lessons.stale = await n(
     `SELECT count(*) AS n FROM academy.lessons l JOIN academy.stages s ON s.id = l.stage_id
-       LEFT JOIN unnest($1::text[], $2::int[]) AS p(code, cnt) ON p.code = s.code
-      WHERE p.code IS NULL OR l.position > p.cnt`,
+       JOIN unnest($1::text[], $2::int[]) AS p(code, cnt) ON p.code = s.code
+      WHERE l.position > p.cnt`,
     [codes, lessonCounts],
   );
-  t.quizzes.stale = await n(
+  t.lessons.other = await n(
+    `SELECT count(*) AS n FROM academy.lessons l JOIN academy.stages s ON s.id = l.stage_id
+      WHERE NOT (s.code = ANY($1::text[]))`,
+    [codes],
+  );
+  t.quizzes.other = await n(
     `SELECT count(*) AS n FROM academy.quizzes q JOIN academy.stages s ON s.id = q.stage_id
       WHERE NOT (s.code = ANY($1::text[]))`,
     [codes],
@@ -413,9 +556,15 @@ async function countStale(client: pg.ClientBase, proto: PrototypeData, t: Record
   t.questions.stale = await n(
     `SELECT count(*) AS n FROM academy.questions x
        JOIN academy.quizzes q ON q.id = x.quiz_id JOIN academy.stages s ON s.id = q.stage_id
-       LEFT JOIN unnest($1::text[], $2::int[]) AS p(code, cnt) ON p.code = s.code
-      WHERE x.position IS NOT NULL AND (p.code IS NULL OR x.position > p.cnt)`,
+       JOIN unnest($1::text[], $2::int[]) AS p(code, cnt) ON p.code = s.code
+      WHERE x.position IS NOT NULL AND x.position > p.cnt`,
     [codes, quizCounts],
+  );
+  t.questions.other = await n(
+    `SELECT count(*) AS n FROM academy.questions x
+       JOIN academy.quizzes q ON q.id = x.quiz_id JOIN academy.stages s ON s.id = q.stage_id
+      WHERE x.position IS NULL OR NOT (s.code = ANY($1::text[]))`,
+    [codes],
   );
   const optionKeys = proto.stages.flatMap((s) =>
     s.quiz.map((q, qi) => ({ code: s.id, pos: qi + 1, cnt: q.options.length })),
@@ -424,10 +573,17 @@ async function countStale(client: pg.ClientBase, proto: PrototypeData, t: Record
     `SELECT count(*) AS n FROM academy.question_options o
        JOIN academy.questions x ON x.id = o.question_id
        JOIN academy.quizzes q ON q.id = x.quiz_id JOIN academy.stages s ON s.id = q.stage_id
-       LEFT JOIN unnest($1::text[], $2::int[], $3::int[]) AS p(code, pos, cnt)
+       JOIN unnest($1::text[], $2::int[], $3::int[]) AS p(code, pos, cnt)
          ON p.code = s.code AND p.pos = x.position
-      WHERE x.position IS NOT NULL AND (p.code IS NULL OR o.position > p.cnt)`,
+      WHERE x.position IS NOT NULL AND o.position > p.cnt`,
     [optionKeys.map((k) => k.code), optionKeys.map((k) => k.pos), optionKeys.map((k) => k.cnt)],
+  );
+  t.question_options.other = await n(
+    `SELECT count(*) AS n FROM academy.question_options o
+       JOIN academy.questions x ON x.id = o.question_id
+       JOIN academy.quizzes q ON q.id = x.quiz_id JOIN academy.stages s ON s.id = q.stage_id
+      WHERE x.position IS NULL OR NOT (s.code = ANY($1::text[]))`,
+    [codes],
   );
   t.status_guide.stale = await n(
     'SELECT count(*) AS n FROM academy.status_guide WHERE NOT (status = ANY($1::text[]))',
@@ -442,6 +598,10 @@ async function countStale(client: pg.ClientBase, proto: PrototypeData, t: Record
       WHERE code IS NOT NULL AND NOT (code = ANY($1::text[]))`,
     [recCodes],
   );
+  t.call_recordings.other = await n(
+    'SELECT count(*) AS n FROM academy.call_recordings WHERE code IS NULL',
+    [],
+  );
   const vis = TRACK_CODES_IN_ORDER.flatMap((tr) =>
     proto.visibleStageIds(tr).map((code) => ({ tr, code })),
   );
@@ -449,39 +609,94 @@ async function countStale(client: pg.ClientBase, proto: PrototypeData, t: Record
     `SELECT count(*) AS n FROM academy.track_visibility v JOIN academy.stages s ON s.id = v.stage_id
        LEFT JOIN unnest($1::text[], $2::text[]) AS p(tr, code)
          ON p.tr = v.track_code AND p.code = s.code
-      WHERE p.code IS NULL`,
-    [vis.map((v) => v.tr), vis.map((v) => v.code)],
+      WHERE p.code IS NULL AND s.code = ANY($3::text[])`,
+    [vis.map((v) => v.tr), vis.map((v) => v.code), codes],
+  );
+  t.track_visibility.other = await n(
+    `SELECT count(*) AS n FROM academy.track_visibility v JOIN academy.stages s ON s.id = v.stage_id
+      WHERE NOT (s.code = ANY($1::text[]))`,
+    [codes],
   );
 }
 
-/** Read back from the DB and compare with the prototype (and the hand-typed oracle). */
+/**
+ * Read back from the DB and compare with the prototype (and the hand-typed oracle).
+ *
+ * Every count here is scoped to PROTOTYPE-OWNED ROWS: the prototype's own stage
+ * codes, and within them the positions its parse defines. Anything else in the
+ * schema — a content pack's stage, an extra lesson on a stage a pack extended,
+ * an AI-drafted question with position IS NULL, a manager's recording upload —
+ * is invisible to these checks by design. main() rolls the whole seed back when
+ * one fails, so an unscoped count would mean the first row from any other source
+ * stopped the prototype seed writing anything, for ever.
+ */
 async function verify(client: pg.ClientBase, proto: PrototypeData): Promise<SeedResult['checks']> {
   const checks: SeedResult['checks'] = [];
   const add = (label: string, ok: boolean, detail: string) => checks.push({ label, ok, detail });
   const codes = proto.stages.map((s) => s.id);
+  // The prototype's own extent on each stage, used to ignore rows past the end
+  // of it: how many lessons, how many questions, how many options per question.
+  const lessonCounts = proto.stages.map((s) => s.lessons.length);
+  const quizCounts = proto.stages.map((s) => s.quiz.length);
+  const optionKeys = proto.stages.flatMap((s) =>
+    s.quiz.map((q, qi) => ({ code: s.id, pos: qi + 1, cnt: q.options.length })),
+  );
+  const recCodes = proto.stages.flatMap((s) =>
+    s.recordings.map((_, i) => recordingCode(s.id, i + 1)),
+  );
+  // Only the slots the prototype itself gives a file to. Whether the media
+  // pipeline has since filled any of the "coming soon" slots is its business.
+  const recCodesWithMedia = proto.stages.flatMap((s) =>
+    s.recordings.flatMap((r, i) => (r.mediaFile === null ? [] : [recordingCode(s.id, i + 1)])),
+  );
+  const statuses = proto.statusGuide.map((g) => g.status);
 
   const one = async (sql: string, params: unknown[] = []) =>
     (await client.query<Record<string, string>>(sql, params)).rows[0] ?? {};
 
   const c = await one(
-    `SELECT
+    `WITH proto_lesson AS (SELECT * FROM unnest($2::text[], $3::int[]) AS p(code, cnt)),
+          proto_quiz   AS (SELECT * FROM unnest($2::text[], $4::int[]) AS p(code, cnt)),
+          proto_option AS (SELECT * FROM unnest($5::text[], $6::int[], $7::int[])
+                             AS p(code, pos, cnt)),
+          proto_q AS (
+            SELECT x.id
+              FROM academy.questions x
+              JOIN academy.quizzes q ON q.id = x.quiz_id
+              JOIN academy.stages s ON s.id = q.stage_id
+              JOIN proto_quiz p ON p.code = s.code
+             WHERE x.position IS NOT NULL AND x.position <= p.cnt),
+          proto_o AS (
+            SELECT o.id, o.is_correct
+              FROM academy.question_options o
+              JOIN academy.questions x ON x.id = o.question_id
+              JOIN academy.quizzes q ON q.id = x.quiz_id
+              JOIN academy.stages s ON s.id = q.stage_id
+              JOIN proto_option p ON p.code = s.code AND p.pos = x.position
+             WHERE o.position <= p.cnt)
+     SELECT
        (SELECT count(*) FROM academy.stages WHERE code = ANY($1::text[])) AS stages,
        (SELECT count(*) FROM academy.lessons l JOIN academy.stages s ON s.id = l.stage_id
-         WHERE s.code = ANY($1::text[])) AS lessons,
-       (SELECT count(*) FROM academy.questions x JOIN academy.quizzes q ON q.id = x.quiz_id
-         JOIN academy.stages s ON s.id = q.stage_id WHERE s.code = ANY($1::text[])) AS questions,
-       (SELECT count(*) FROM academy.question_options o JOIN academy.questions x ON x.id = o.question_id
-         JOIN academy.quizzes q ON q.id = x.quiz_id JOIN academy.stages s ON s.id = q.stage_id
-         WHERE s.code = ANY($1::text[])) AS options,
-       (SELECT count(*) FROM academy.question_options o JOIN academy.questions x ON x.id = o.question_id
-         JOIN academy.quizzes q ON q.id = x.quiz_id JOIN academy.stages s ON s.id = q.stage_id
-         WHERE s.code = ANY($1::text[]) AND o.is_correct) AS correct,
-       (SELECT count(*) FROM academy.status_guide) AS status_rows,
-       (SELECT count(*) FROM academy.call_recordings r JOIN academy.stages s ON s.id = r.stage_id
-         WHERE s.code = ANY($1::text[])) AS recordings,
-       (SELECT count(*) FROM academy.call_recordings r JOIN academy.stages s ON s.id = r.stage_id
-         WHERE s.code = ANY($1::text[]) AND r.media_key IS NOT NULL) AS with_media`,
-    [codes],
+          JOIN proto_lesson p ON p.code = s.code WHERE l.position <= p.cnt) AS lessons,
+       (SELECT count(*) FROM proto_q) AS questions,
+       (SELECT count(*) FROM proto_o) AS options,
+       (SELECT count(*) FROM proto_o WHERE is_correct) AS correct,
+       (SELECT count(*) FROM academy.status_guide WHERE status = ANY($8::text[])) AS status_rows,
+       (SELECT count(*) FROM academy.call_recordings WHERE code = ANY($9::text[])) AS recordings,
+       (SELECT count(*) FROM academy.call_recordings
+         WHERE code = ANY($10::text[]) AND media_key IS NOT NULL) AS with_media`,
+    [
+      codes,
+      codes,
+      lessonCounts,
+      quizCounts,
+      optionKeys.map((k) => k.code),
+      optionKeys.map((k) => k.pos),
+      optionKeys.map((k) => k.cnt),
+      statuses,
+      recCodes,
+      recCodesWithMedia,
+    ],
   );
   const lessons = proto.stages.reduce((a, s) => a + s.lessons.length, 0);
   const questions = proto.stages.reduce((a, s) => a + s.quiz.length, 0);
@@ -506,10 +721,11 @@ async function verify(client: pg.ClientBase, proto: PrototypeData): Promise<Seed
     `SELECT count(*) AS n FROM (
        SELECT x.id FROM academy.questions x
          JOIN academy.quizzes q ON q.id = x.quiz_id JOIN academy.stages s ON s.id = q.stage_id
+         JOIN unnest($1::text[], $2::int[]) AS p(code, cnt) ON p.code = s.code
          LEFT JOIN academy.question_options o ON o.question_id = x.id AND o.is_correct
-        WHERE s.code = ANY($1::text[])
+        WHERE x.position IS NOT NULL AND x.position <= p.cnt
         GROUP BY x.id HAVING count(o.id) <> 1) z`,
-    [codes],
+    [codes, quizCounts],
   );
   add('every question has exactly 1 correct option', bad.n === '0', `${bad.n ?? '?'} bad`);
 
@@ -527,10 +743,13 @@ async function verify(client: pg.ClientBase, proto: PrototypeData): Promise<Seed
     oracle = JSON.parse(readFileSync(ORACLE_FILE, 'utf8')) as Record<string, unknown>;
   }
   for (const track of TRACK_CODES_IN_ORDER) {
+    // Prototype stages only, still in v.position order: a stage another source
+    // slotted into this track is skipped, not compared and not an error. What
+    // the gate depends on is the relative order of the prototype's own stages.
     const r = await client.query<{ code: string }>(
       `SELECT s.code FROM academy.track_visibility v JOIN academy.stages s ON s.id = v.stage_id
-        WHERE v.track_code = $1 ORDER BY v.position`,
-      [track],
+        WHERE v.track_code = $1 AND s.code = ANY($2::text[]) ORDER BY v.position`,
+      [track, codes],
     );
     const db = r.rows.map((x) => x.code).join(' ');
     const want = proto.visibleStageIds(track).join(' ');
@@ -553,9 +772,17 @@ async function verify(client: pg.ClientBase, proto: PrototypeData): Promise<Seed
 function printResult(res: SeedResult, dryRun: boolean): void {
   const rows = TABLES.map((name) => {
     const x = res.tallies[name];
-    return [name, x.source, x.inserted, x.updated, x.unchanged, x.stale].map(String);
+    return [name, x.source, x.inserted, x.updated, x.unchanged, x.stale, x.other].map(String);
   });
-  const head = ['table', 'source', 'inserted', 'updated', 'unchanged', 'stale (kept)'];
+  const head = [
+    'table',
+    'source',
+    'inserted',
+    'updated',
+    'unchanged',
+    'stale (kept)',
+    'other source',
+  ];
   printTable(head, rows);
   console.log('');
   printTable(

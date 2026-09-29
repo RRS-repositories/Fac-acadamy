@@ -1,4 +1,4 @@
-// Integration test: applies 0000-0011 to a THROW-AWAY database and checks the
+// Integration test: applies 0000-0013 to a THROW-AWAY database and checks the
 // result. Runs only when MIGRATION_TEST_DB_NAME is set (CI and the local test
 // database set it). It DROPS the academy schema in that database: never point
 // it at anything that matters.
@@ -56,7 +56,7 @@ const quiet = () => undefined;
 const NEWLINE = String.fromCharCode(10);
 const ENGINE = 'faster-whisper:small';
 
-describe.skipIf(!TEST_DB)('migrations 0000-0011 on a fresh database', () => {
+describe.skipIf(!TEST_DB)('migrations 0000-0013 on a fresh database', () => {
   let settings: DbSettings;
   let client: pg.Client;
 
@@ -98,6 +98,8 @@ describe.skipIf(!TEST_DB)('migrations 0000-0011 on a fresh database', () => {
       '0009_call_summary.sql',
       '0010_transcript_segments.sql',
       '0011_transcript_speaker.sql',
+      '0012_content_source.sql',
+      '0013_completion_scope.sql',
     ]);
   });
 
@@ -335,6 +337,39 @@ describe.skipIf(!TEST_DB)('migrations 0000-0011 on a fresh database', () => {
     }
   });
 
+  it('adds content_source to stages, lessons and questions, defaulting to PROTOTYPE (0012)', async () => {
+    const { rows } = await client.query<{
+      table_name: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>(
+      `SELECT table_name, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'academy' AND column_name = 'content_source'
+        ORDER BY table_name`,
+    );
+    expect(rows.map((r) => r.table_name)).toEqual(['lessons', 'questions', 'stages']);
+    for (const r of rows) {
+      expect(r.is_nullable).toBe('NO');
+      expect(r.column_default).toContain('PROTOTYPE');
+    }
+  });
+
+  it('refuses a content_source outside the three known values (0012)', async () => {
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO academy.stages (code, level_id, dept, position, title, track, content_source)
+         VALUES ('zzTest', NULL, 'ADMIN', 99, 'T', 'ADMIN', 'SOMEWHERE_ELSE')`,
+      );
+      throw new Error('the CHECK constraint did not fire');
+    } catch (err) {
+      expect(err).toMatchObject({ code: '23514' }); // check_violation
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
   it('leaves academy_app able to UPDATE call_recordings, which 0009 needs (0009)', async () => {
     const role = await client.query("SELECT 1 FROM pg_roles WHERE rolname = 'academy_app'");
     if (role.rowCount === 0) return; // role could not be created here
@@ -527,6 +562,111 @@ describe.skipIf(!TEST_DB)('migrations 0000-0011 on a fresh database', () => {
     }
   });
 
+  it('leaves academy_app able to write content_source (0012)', async () => {
+    const role = await client.query("SELECT 1 FROM pg_roles WHERE rolname = 'academy_app'");
+    if (role.rowCount === 0) return; // role could not be created here
+    const { rows } = await client.query<{ sel: boolean; ins: boolean; upd: boolean }>(
+      `SELECT has_table_privilege('academy_app', 'academy.stages', 'SELECT') AS sel,
+              has_table_privilege('academy_app', 'academy.lessons', 'INSERT') AS ins,
+              has_table_privilege('academy_app', 'academy.questions', 'UPDATE') AS upd`,
+    );
+    expect(rows[0]).toEqual({ sel: true, ins: true, upd: true });
+  });
+
+  it('records what a completion covers, and never rewrites completed_at (0013)', async () => {
+    const { rows } = await client.query<{
+      table_name: string;
+      column_name: string;
+      is_nullable: string;
+    }>(
+      `SELECT table_name, column_name, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'academy'
+          AND column_name IN ('modules_covered', 'stages_covered', 'scope_size', 'recompleted_at')
+        ORDER BY table_name, column_name`,
+    );
+    expect(rows.map((r) => `${r.table_name}.${r.column_name}`)).toEqual([
+      'certificates.scope_size',
+      'dept_completions.modules_covered',
+      'dept_completions.recompleted_at',
+      'level_completions.recompleted_at',
+      'level_completions.stages_covered',
+    ]);
+    // Every one of them is nullable: NULL means UNKNOWN, which is the whole
+    // point of the backfill not guessing.
+    for (const r of rows) expect(r.is_nullable).toBe('YES');
+  });
+
+  it('refuses a scope of zero, which would be a bug wearing a plausible number (0013)', async () => {
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO academy.trainees (full_name, email) VALUES ('Zero Scope', 'zero@example.com')`,
+      );
+      await client.query(
+        `INSERT INTO academy.dept_completions (trainee_id, dept, modules_covered)
+         SELECT id, 'ADMIN', 0 FROM academy.trainees WHERE email = 'zero@example.com'`,
+      );
+      throw new Error('the CHECK constraint did not fire');
+    } catch (err) {
+      expect(err).toMatchObject({ code: '23514' }); // check_violation
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('widens the certificate uniqueness rule to carry the scope (0013)', async () => {
+    const { rows } = await client.query<{ indexname: string; indexdef: string }>(
+      `SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'academy' AND tablename = 'certificates'
+          AND indexname LIKE 'certificates_one_per%'
+        ORDER BY indexname`,
+    );
+    // The two scope-aware ones replace 0002's, and the TRACK one is untouched:
+    // a whole-track award has no scope.
+    expect(rows.map((r) => r.indexname)).toEqual([
+      'certificates_one_per_dept_scope',
+      'certificates_one_per_level_scope',
+      'certificates_one_per_track',
+    ]);
+    for (const r of rows.slice(0, 2)) {
+      expect(r.indexdef).toContain('scope_size');
+      // NULLS NOT DISTINCT, so two unknown-scope certificates for the same
+      // target still collide — the lookup compares them the same way.
+      expect(r.indexdef).toContain('NULLS NOT DISTINCT');
+    }
+  });
+
+  it('lets one trainee hold two certificates for the same academy at different scopes (0013)', async () => {
+    await client.query('BEGIN');
+    try {
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO academy.trainees (full_name, email) VALUES ('Two Scopes', 'two@example.com')
+         RETURNING id`,
+      );
+      const trainee = rows[0]!.id;
+      const insert = (publicId: string, scope: number | null): Promise<unknown> =>
+        client.query(
+          `INSERT INTO academy.certificates
+             (public_id, trainee_id, kind, dept, track_code, holder_name, scope_size)
+           VALUES ($1, $2, 'DEPT', 'ADMIN', 'ADMIN', 'Two Scopes', $3)`,
+          [publicId, trainee, scope],
+        );
+      await insert('scope-two-certificate', 2);
+      await insert('scope-three-certificate', 3);
+      const count = await client.query<{ n: string }>(
+        'SELECT count(*) AS n FROM academy.certificates WHERE trainee_id = $1',
+        [trainee],
+      );
+      expect(count.rows[0]!.n).toBe('2');
+
+      // But not two at the SAME scope, and not two unknown ones either.
+      await expect(insert('scope-three-again-cert', 3)).rejects.toMatchObject({ code: '23505' });
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
   it('creates every table named in 0001 (19) and the 0002 tables', async () => {
     const from0001 = tablesCreatedIn('0001_academy_schema.sql');
     expect(from0001).toHaveLength(19);
@@ -602,8 +742,8 @@ describe.skipIf(!TEST_DB)('migrations 0000-0011 on a fresh database', () => {
   it('applies nothing on a second run', async () => {
     const res = await applyMigrations({ commit: true, expectDb: TEST_DB, settings, log: quiet });
     expect(res.applied).toEqual([]);
-    // 0000 through 0011: twelve files.
-    expect(res.appliedBefore).toBe(12);
+    // 0000 through 0013: fourteen files.
+    expect(res.appliedBefore).toBe(14);
   });
 
   it('dry run on an up-to-date database lists 0 pending', async () => {

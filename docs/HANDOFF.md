@@ -1,6 +1,6 @@
 # Handoff — where the FAC Academy project stands
 
-*Last updated: 25 Sep 2026 (listening-budget fix, branch `sukhendu/listen-coverage-fix`; not committed). Update this file at the end of every working session.*
+*Last updated: 29 Sep 2026 (content packs + the Admin IRL module, branch `sukhendu/admin-irl-module`; not committed). Update this file at the end of every working session.*
 
 ## State right now
 
@@ -77,6 +77,66 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 - **Where the transcript goes.** The configured endpoint proxies most of its models to a third party, so with a cloud-tagged model named the transcript of a real client call **leaves the building** on the first press of that recording. That is a data-protection decision for whoever sets `SUMMARY_MODEL_NAME`; `server/src/media/summaryModel.ts` says so at the top and the API prints the model name at start-up. Nothing that contains transcript or summary text is ever logged.
 - **The prompt** lives on its own in `server/src/media/summaryPrompt.ts` so it can be read without reading any HTTP code. It asks for a short factual summary of what was said and deliberately does NOT ask the model to judge how the agent performed — that is a manager's job, and a test pins it.
 - **Proved in a browser** on 28 Sep with an invented transcript on `academy_dev` recording 50 and a LOCAL STUB of the model endpoint (no model is reachable from this machine): first press → one model call and the summary on screen; reload and a second press → the saved text, still one model call. Screenshots `recording-summary-1-button.png`, `-2-shown.png`, `-2-shown-card.png`, `-3-second-press.png` in `E:\RRC\Tasks Files\T-22-09\screenshots\`.
+
+## A second content source: content packs, and the Admin IRL module (29 Sep, branch `sukhendu/admin-irl-module`)
+
+**Nothing here is production-ready. It is in `academy_dev` only, and it must not go in front of a trainee until Brad has ruled on three contradictions (below).**
+
+### Why anything in the seed had to change first
+
+The prototype was the only content source, and every check in `ops/seed/seed-content.ts` and `ops/seed/verify-seed.ts` was written as a whole-table count. `main()` rolls the entire seed back when one check fails, so the moment any row existed that the prototype had not written, **every future prototype seed would write nothing and fail**. That was already true without this module: S08's question generator drafts questions with `position IS NULL`, which 0003 added precisely so they "never collide", and one of them was enough to abort the seed (proved: the unscoped count reports 232 against the prototype's 231).
+
+Both files now assert facts about **prototype-owned rows only** — the prototype's own stage codes, and within them the positions its own parse defines. Anything else is counted once, reported, and ignored. Three more repairs of the same kind came with it:
+
+- **Positions.** `stages (dept, position)` and `track_visibility (track, position)` are UNIQUE, so writing 1..n blindly would collide with a row another source placed in the middle. The prototype's stages now take the next FREE slot, stepping over what is already there, and a stage pushed down takes its badge number with it (`A2` → `A3`). On a prototype-only database every position is byte-for-byte what it was before.
+- **Recordings.** A slot that already holds media is now left alone. Without that guard a committed prototype seed set `media_key` back to NULL on every slot the prototype calls "coming soon" — **13 real recordings in `academy_dev`** — and re-pointed the FOS video at the prototype's key instead of the content-addressed one the ingest tool stored. `verify-seed` had been failing `f1`, `f2` and `f3` on `academy_dev` for this reason since the media work landed; it is green again, and the checks now say out loud which slots the media pipeline owns.
+- **Evidence.** With the module seeded, the original prototype seed was run twice, committed: **0 rows written, 0 failed checks, no rollback, both times.** The `verify-seed` fingerprint is unchanged table by table except `stages` and `track_visibility`, the only two that hold the moved module's position.
+
+### The supported route for content the prototype does not have
+
+| Piece | Where |
+|---|---|
+| `CONTENT_PACK_PATH` | `.env.example`, placeholder only. Ops-only: the API and the worker never read it |
+| Path guard | `ops/lib/content-pack-path.ts` — refuses a path inside the repo, follows symlinks, same wording as `prototype-path.ts` |
+| Pack shape and validation | `ops/seed/content-pack.ts` — zod, strict; errors name the field, never the value |
+| Seeder | `ops/seed/seed-pack-content.ts` — `--expect-db`, **dry run by default** (`--commit` to apply), `--confirm-production`, one transaction, upserts on stable keys, never deletes, output is counts and ids only |
+| Provenance | migration `0012_content_source.sql` — `content_source` on `stages`, `lessons` and `questions` (`PROTOTYPE` / `PACK` / `GENERATED`). Adds no table, so it adds no grant; it checks 0002's instead. **We wrote it; Brad applies it in production.** It is numbered 0012 so it queues behind 0009-0011 from the media branch |
+| Git-side guard | `scripts/check-forbidden-files.mjs` now refuses `*.pack.json`, `build-pack.*` and anything under a `content-pack/` folder |
+
+The pack itself lives **outside the repo** at `E:\RRC\Tasks Files\T-29-09\content-pack\`, with the script that builds it from the two source documents. It carries the department's own lender thresholds, three worked cases drawn from the real caseload, and every correct answer in plain text — the same class of material as the prototype, kept in the same place for the same reasons.
+
+### The module, as seeded into `academy_dev`
+
+Admin now reads: **A1** DSAR Review → **A2** How a Claim Qualifies — Irresponsible Lending (new, stage code `dA3`) → **A3** Good Case or Bad Case (was A2, stage code `dA2`, unchanged content). Six lessons, ten questions, pass mark 80 (the department rule, and the percentage form of the document's own "8 of 10"). No recording slots. The stage code is an identity, not an order: it is what `stage_completions`, `quiz_attempts` and `lesson_progress` point at, so it never moves when the module does.
+
+The ten self-marked questions in the source React component became real `questions` rows — `HUMAN`, `APPROVED`, active, four options, one correct — and the component's answer indices, scoring function and checker exist nowhere that ships. The markdown's `**(correct)**` markers and the JSX's `answer:` indices agree on all ten, and the pack's build script asserts that agreement before it writes anything.
+
+### Still blocking — Brad's, not technical
+
+The new module and `dA2` teach **different things about the same three points**, and a trainee would meet both:
+
+| | New module | `dA2` (prototype, already seeded and quizzed) |
+|---|---|---|
+| Vanquis credit limit | more than **£250** | more than **£500**, and its worked example turns on a £500 account failing |
+| Outside six years | **Not Qualified** | a third route: no gambling + suspension/charge-off within 3 years → **proceed** |
+| Bank statements | **three** months before the loan (its Q4 tests it) | **two** months before each limit increase |
+
+Two of the three have been open in this file since 22 Sep. They are now blocking. Whichever way each goes, content changes on one side.
+
+### The four deferred items, now done (29 Sep)
+
+The content is settled, so the four things left describing the Admin track as two modules have been finished. Not committed.
+
+- **The fixture keeps its independence, and gains a second half.** `ops/fixtures/expected-track-visibility.json` still has the nine track arrays as **prototype content only** — it has to, because `ops/seed/seed-content.ts` and `ops/seed/verify-seed.ts` read a track's stages filtered to the prototype's own codes and compare that list against the array here; a pack stage in one of those arrays would report MISMATCH and roll back every future prototype seed. Pack stages are declared separately under `packStages` (`{ code, after, badge, questions }`, hand-typed), and `e2e/helpers/expected.ts` and `ops/dev/track-sweep.ts` compose the two. `ops/test/verify-fixtures.test.ts` keeps every prototype assertion it had and adds a suite for the pack half: anchors that resolve, no collision with a prototype code, and 6+1 stages / 53+10 questions for Admin.
+- **The e2e specs.** `tracks.spec.ts` needed no edit once the helper composed — **9/9 pass against `academy_dev`**. `journey-admin.spec.ts` now takes its stage list from the oracle instead of naming stages, walks however many modules the academy has, and asserts the department certificate is withheld after *each* module but the last.
+- **`PROJECT-PLAN.md` §1** marks Admin `6 (+1)` / `53 (+10)` and says underneath that `dA3` is not from the prototype, why the code and the badge differ, and why the fixture keeps the two sources apart.
+- **`messages.ts` now says "has passed every module of the … department academy"** — correct for any number, no count asserted, not special-cased. `server/test/jobs/notifications.test.ts` gained a test that pins the wording and fails if a count word comes back.
+- `client/src/components/training/DeptSection.jsx` **left as `md:grid-cols-2`** on purpose: three cards wrap 2+1, the orphan the same width and left-aligned, which is what `LevelSection.jsx` does with the identical classes in the level blocks directly above it. `lg:grid-cols-3` would narrow the cards for the five departments that still have two and leave a gap on their row.
+
+### What is NOT done, and must be before go-live
+
+- **`journey-admin.spec.ts` cannot be run to the end on `academy_dev` today, for a reason that has nothing to do with the module.** It fails at its *first* step, `s1`, with `403 recordings_incomplete`: since the media work landed, `academy_dev` has real media on s1, s2, s3, s4, s5, cscalls, s6calls, dA1, dF2 and l2s1 (20 slots), and `fastForwardStages()` has no way to pay a listening gate — s1 alone is 1052 s + 809 s of real wall-clock time. `journey-cs.spec.ts` walks the same core and is blocked the same way. The e2e design assumed the core stages had only "coming soon" slots and that the one piece of media in the test world was the 20-second fixture installed on s4. Either the fast-forward needs a sanctioned way to credit a listen, or the journeys need a database without media on the core — a decision, not a tidy-up, because faking a listen in the harness is exactly what the listening gate exists to prevent.
+- **No leak canary from the new content.** `leak-canaries.json` still holds the four prototype hashes, so `check:bundle` proves nothing about the new answers by hash. Adding one would make `verify-seed`'s `i1` positive control fail on any database without the pack, so it waits for go-live. A direct scan of `client/dist`, `client/src` and `shared/src` for all ten new correct answers found nothing.
 
 ## Media (S06)
 
@@ -167,4 +227,4 @@ One client test run crashed natively (`ERR_IPC_CHANNEL_CLOSED`) right after the 
 
 **Video:** `video1437476061.mp4` is 30 MB, 19:29, with its index at the front (streams well). **Not yet reviewed for client data**; ffmpeg isn't installed on this machine.
 
-**Content rulings Brad still owes** (ship the current wording until he rules): bank-statement window (2 vs 3 months), complaint timescale (8 vs 12 weeks), the "disposable income over 50%" line, "Anthony" named as case handler, "more than £500" strictness.
+**Content rulings Brad still owes** (ship the current wording until he rules): bank-statement window (2 vs 3 months), complaint timescale (8 vs 12 weeks), the "disposable income over 50%" line, "Anthony" named as case handler, "more than £500" strictness. **Three of these now block the Admin IRL module** rather than merely being noted: the Vanquis limit (£250 vs £500), the statement window (3 vs 2 months) and whether a case outside six years still has a route. See the content-pack section above.
