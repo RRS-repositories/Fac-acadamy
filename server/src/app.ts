@@ -10,6 +10,7 @@ import { mediaProgressRouter } from './media/progress.js';
 import { mediaStreamRouter } from './media/routes.js';
 import type { MediaStore } from './media/store.js';
 import { mediaSummaryRouter } from './media/summary.js';
+import { mediaTranscriptRouter } from './media/transcript.js';
 import type { SummaryModel } from './media/summaryModel.js';
 import { managerUploadRouter } from './media/upload.js';
 import { requireAcademyFlag } from './middleware/flag.js';
@@ -152,6 +153,12 @@ export function createApp(deps: AppDeps): Express {
       '/api/media',
       mediaSummaryRouter({ ...deps.training, model: deps.summaryModel ?? null }),
     );
+    // The transcript, as timed lines, for the panel under the player (0010).
+    // Read-only, and behind the same requireAuth and the same gate() as the bytes
+    // themselves: a transcript is the content of the call written down. No flag
+    // and no 'disabled' state — a transcript that exists is shown to somebody who
+    // may hear it anyway; whether any are MADE is the worker's question.
+    app.use('/api/media', mediaTranscriptRouter(deps.training));
   }
 
   // S09: the signed-in half — the trainee's own certificates and the PDF

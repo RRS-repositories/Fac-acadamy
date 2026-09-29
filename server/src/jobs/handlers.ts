@@ -8,6 +8,7 @@ import { QUEUE_NAMES } from '../queues/names.js';
 import type { JobHandlers } from '../queues/runtime.js';
 import type { QueueLogger } from '../queues/logging.js';
 import type { NotificationRules } from '../modules/notifications/index.js';
+import type { TranscriptionHandlerDeps } from './mediaJobs.js';
 import type { CertificateJob, CertificateRenderer } from './certificateJobs.js';
 import { createManagerNotifyHandler } from './managerNotify.js';
 import { createQuestionGenHandler, createTranscriptionHandler } from './mediaJobs.js';
@@ -22,6 +23,18 @@ export interface HandlerOptions {
    * losing somebody's certificate.
    */
   certificates?: CertificateRenderer;
+  /**
+   * Speech-to-text (plan §3.3). The database and MEDIA_ROOT it needs, and the
+   * engine — which is null when transcription is switched off or not configured
+   * on this machine, in which case the handler logs the job and completes it
+   * exactly as it did while it was a stub.
+   *
+   * Left out entirely — which is what every test that does not care about
+   * transcription does — the handler is registered with no database and no
+   * engine, and then it logs the job and completes it without reading anything.
+   * A queue with no consumer never happens.
+   */
+  transcription?: Omit<TranscriptionHandlerDeps, 'logger'>;
 }
 
 export function createHandlers(options: HandlerOptions): JobHandlers {
@@ -30,7 +43,11 @@ export function createHandlers(options: HandlerOptions): JobHandlers {
 
   return {
     [QUEUE_NAMES.managerNotify]: createManagerNotifyHandler(rules),
-    [QUEUE_NAMES.transcription]: createTranscriptionHandler(logger),
+    [QUEUE_NAMES.transcription]: createTranscriptionHandler(
+      options.transcription === undefined
+        ? { db: null, mediaRoot: '', transcriber: null, logger }
+        : { ...options.transcription, logger },
+    ),
     [QUEUE_NAMES.questionGen]: createQuestionGenHandler(logger),
 
     [QUEUE_NAMES.certificates]: async (job) => {

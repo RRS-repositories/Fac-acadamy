@@ -1,4 +1,4 @@
-// Integration test: applies 0000-0009 to a THROW-AWAY database and checks the
+// Integration test: applies 0000-0011 to a THROW-AWAY database and checks the
 // result. Runs only when MIGRATION_TEST_DB_NAME is set (CI and the local test
 // database set it). It DROPS the academy schema in that database: never point
 // it at anything that matters.
@@ -52,7 +52,11 @@ function tablesCreatedIn(filename: string): string[] {
 
 const quiet = () => undefined;
 
-describe.skipIf(!TEST_DB)('migrations 0000-0009 on a fresh database', () => {
+/** Written out rather than inline so an escape cannot get lost in an edit. */
+const NEWLINE = String.fromCharCode(10);
+const ENGINE = 'faster-whisper:small';
+
+describe.skipIf(!TEST_DB)('migrations 0000-0011 on a fresh database', () => {
   let settings: DbSettings;
   let client: pg.Client;
 
@@ -92,6 +96,8 @@ describe.skipIf(!TEST_DB)('migrations 0000-0009 on a fresh database', () => {
       '0007_certificates.sql',
       '0008_listen_budget.sql',
       '0009_call_summary.sql',
+      '0010_transcript_segments.sql',
+      '0011_transcript_speaker.sql',
     ]);
   });
 
@@ -341,6 +347,186 @@ describe.skipIf(!TEST_DB)('migrations 0000-0009 on a fresh database', () => {
     expect(rows[0]).toEqual({ sel: true, upd: true });
   });
 
+  it('adds the three transcript columns to call_recordings, all nullable (0010)', async () => {
+    const { rows } = await client.query<{
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>(
+      `SELECT column_name, data_type, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'academy' AND table_name = 'call_recordings'
+          AND column_name IN ('transcript_segments', 'transcript_engine', 'transcript_at')
+        ORDER BY column_name`,
+    );
+    expect(rows.map((r) => r.column_name)).toEqual([
+      'transcript_at',
+      'transcript_engine',
+      'transcript_segments',
+    ]);
+    // JSONB, not JSON: it is the type Postgres can look inside, which is what the
+    // CHECK below needs and what a future search across transcripts would need.
+    expect(rows.find((r) => r.column_name === 'transcript_segments')?.data_type).toBe('jsonb');
+    // "Not transcribed yet" is the normal state of every recording today. A
+    // DEFAULT on transcript_at would make a row with no transcript look like one.
+    for (const row of rows) {
+      expect(row.is_nullable, row.column_name).toBe('YES');
+      expect(row.column_default, row.column_name).toBeNull();
+    }
+  });
+
+  it('stores timed segments and reads them back as an array of objects (0010)', async () => {
+    // The round trip that the panel under the player depends on: fractions of a
+    // second survive, the order survives, and pg hands the value back as a real
+    // JavaScript array rather than a string to parse.
+    await client.query('BEGIN');
+    try {
+      const recording = await client.query<{ id: string }>(
+        `INSERT INTO call_recordings (category, title, media_key, duration_secs)
+         VALUES ('INDUCTION', 'Transcript round trip', 'academy/media/transcript.mp3', 30)
+         RETURNING id`,
+      );
+      const id = recording.rows[0]!.id;
+
+      // Invented lines between invented people: no real call, nothing from the
+      // prototype.
+      const segments = [
+        { start: 0, end: 3.5, text: 'Good morning, this is Dana from the claims team.' },
+        { start: 3.5, end: 5.25, text: 'Speaking.' },
+        { start: 6, end: 9.75, text: 'I am calling about the questionnaire.' },
+      ];
+      await client.query(
+        `UPDATE call_recordings
+            SET transcript = $2,
+                transcript_segments = $3::jsonb,
+                transcript_engine = $4,
+                transcript_at = now(),
+                transcript_status = 'DONE'
+          WHERE id = $1`,
+        [id, segments.map((s) => s.text).join(NEWLINE), JSON.stringify(segments), ENGINE],
+      );
+
+      const { rows } = await client.query<{
+        transcript: string;
+        transcript_segments: unknown;
+        transcript_engine: string;
+        transcript_status: string;
+        at_set: boolean;
+      }>(
+        `SELECT transcript, transcript_segments, transcript_engine, transcript_status,
+                (transcript_at IS NOT NULL) AS at_set
+           FROM call_recordings WHERE id = $1`,
+        [id],
+      );
+      const row = rows[0]!;
+      expect(row.transcript_segments).toEqual(segments);
+      expect(Array.isArray(row.transcript_segments)).toBe(true);
+      expect(row.transcript.split(NEWLINE)).toHaveLength(3);
+      expect(row.transcript_engine).toBe(ENGINE);
+      expect(row.transcript_status).toBe('DONE');
+      expect(row.at_set).toBe(true);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('stores a speaker on a line, and lets a line have none (0011)', async () => {
+    // The speaker is a key INSIDE the existing array, not a column: it belongs to
+    // a line, and it is written and replaced with the rest of the line. A line
+    // with no speaker is a line nobody could attribute, and it must round-trip
+    // as a line with no speaker rather than as one with a null.
+    await client.query('BEGIN');
+    try {
+      const recording = await client.query<{ id: string }>(
+        `INSERT INTO call_recordings (category, title, media_key, duration_secs)
+         VALUES ('INDUCTION', 'Speaker round trip', 'academy/media/speakers.mp3', 12)
+         RETURNING id`,
+      );
+      const id = recording.rows[0]!.id;
+      const segments = [
+        { start: 0, end: 3, text: 'One side of an invented call.', speaker: 'A' },
+        { start: 3, end: 6, text: 'The other side.', speaker: 'B' },
+        { start: 6, end: 9, text: 'Both at once, so nobody could tell.' },
+      ];
+      await client.query(
+        `UPDATE call_recordings
+            SET transcript = $2, transcript_segments = $3::jsonb,
+                transcript_engine = $4, transcript_at = now(), transcript_status = 'DONE'
+          WHERE id = $1`,
+        [id, segments.map((s) => s.text).join(NEWLINE), JSON.stringify(segments), ENGINE],
+      );
+      const { rows } = await client.query<{ transcript_segments: unknown }>(
+        'SELECT transcript_segments FROM call_recordings WHERE id = $1',
+        [id],
+      );
+      expect(rows[0]!.transcript_segments).toEqual(segments);
+      const third = (rows[0]!.transcript_segments as Record<string, unknown>[])[2]!;
+      expect('speaker' in third).toBe(false);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('describes the speaker in the column comment, so psql tells the truth (0011)', async () => {
+    // The column's own description is the first thing somebody reads when they
+    // come to this table with psql and no access to the repository. 0010 said
+    // three keys; there are now four, and 0010 is not edited to say so because
+    // the runner refuses a file whose sha256 has changed since it was applied.
+    const { rows } = await client.query<{ comment: string | null }>(
+      `SELECT col_description('academy.call_recordings'::regclass, a.attnum) AS comment
+         FROM pg_attribute a
+        WHERE a.attrelid = 'academy.call_recordings'::regclass
+          AND a.attname = 'transcript_segments'`,
+    );
+    expect(rows[0]!.comment).toMatch(/speaker/i);
+    expect(rows[0]!.comment).toMatch(/left channel/i);
+  });
+
+  it('refuses segments that are not an array, and segments with no transcript (0010)', async () => {
+    await client.query('BEGIN');
+    try {
+      const recording = await client.query<{ id: string }>(
+        `INSERT INTO call_recordings (category, title, media_key, duration_secs)
+         VALUES ('INDUCTION', 'Transcript constraint check', 'academy/media/tc.mp3', 30)
+         RETURNING id`,
+      );
+      const id = recording.rows[0]!.id;
+
+      for (const half of [
+        // Timings with no words: meaningless, and every reader in the codebase
+        // asks "is there a transcript?" by looking at the TEXT.
+        `transcript_segments = '[]'::jsonb`,
+        // Not an array: the client iterates it, and a player is the last thing in
+        // this app that may break.
+        `transcript = 'Some words.', transcript_segments = '{"start": 0}'::jsonb`,
+        `transcript = 'Some words.', transcript_segments = '"a line"'::jsonb`,
+        `transcript = '   ', transcript_segments = '[]'::jsonb`,
+      ]) {
+        await client.query('SAVEPOINT half');
+        await expect(
+          client.query(`UPDATE call_recordings SET ${half} WHERE id = $1`, [id]),
+        ).rejects.toThrow(/call_recordings_transcript_segments_shape/);
+        await client.query('ROLLBACK TO SAVEPOINT half');
+      }
+
+      // Text with NO segments is legal on purpose: that is what a transcript
+      // typed in by a person looks like, and the panel says it cannot follow
+      // along rather than inventing times.
+      await client.query(
+        `UPDATE call_recordings SET transcript = 'Typed in by hand.' WHERE id = $1`,
+        [id],
+      );
+      // An empty array beside real text is legal too — nothing was said.
+      await client.query(
+        `UPDATE call_recordings SET transcript_segments = '[]'::jsonb WHERE id = $1`,
+        [id],
+      );
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
   it('creates every table named in 0001 (19) and the 0002 tables', async () => {
     const from0001 = tablesCreatedIn('0001_academy_schema.sql');
     expect(from0001).toHaveLength(19);
@@ -416,7 +602,8 @@ describe.skipIf(!TEST_DB)('migrations 0000-0009 on a fresh database', () => {
   it('applies nothing on a second run', async () => {
     const res = await applyMigrations({ commit: true, expectDb: TEST_DB, settings, log: quiet });
     expect(res.applied).toEqual([]);
-    expect(res.appliedBefore).toBe(10);
+    // 0000 through 0011: twelve files.
+    expect(res.appliedBefore).toBe(12);
   });
 
   it('dry run on an up-to-date database lists 0 pending', async () => {

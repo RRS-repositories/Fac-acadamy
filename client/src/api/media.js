@@ -4,9 +4,11 @@ import {
   MEDIA_MAX_INTERVALS,
   MediaProgressResponseSchema,
   RecordingSummaryResponseSchema,
+  RecordingTranscriptResponseSchema,
   mediaProgressPath,
   mediaStreamPath,
   recordingSummaryPath,
+  recordingTranscriptPath,
 } from '@fac-academy/shared';
 import { ApiError } from './client.js';
 import { trainingKeys } from './training.js';
@@ -21,7 +23,7 @@ import { trainingKeys } from './training.js';
  * returns the parsed response rather than a boolean the caller computed.
  */
 
-export { mediaStreamPath, mediaProgressPath, recordingSummaryPath };
+export { mediaStreamPath, mediaProgressPath, recordingSummaryPath, recordingTranscriptPath };
 
 /** Most intervals one request may carry — the shared contract's own limit. */
 export const MAX_INTERVALS = MEDIA_MAX_INTERVALS;
@@ -184,5 +186,75 @@ export function useSummariseRecording(recordingId) {
     onSuccess: (data) => {
       queryClient.setQueryData(summaryKeys.summary(recordingId), data);
     },
+  });
+}
+
+/* -------------------------------------------------------------------------- *
+ * The transcript, as timed lines
+ * -------------------------------------------------------------------------- *
+ *
+ * What was said on the recording, with a start and end second per line, so the
+ * panel under the player can highlight the line being spoken and let somebody
+ * click back to one they have already heard.
+ *
+ * Read-only. There is no verb here that makes a transcript: they are written by
+ * the worker and by the ops backlog script, away from any request, and a trainee
+ * can neither cause one nor correct one.
+ *
+ * Like the summary, a transcript belongs to the RECORDING and not to the person
+ * reading it, so there is nothing per-person to cache and nothing to refetch: it
+ * is fetched once and kept.
+ */
+
+/** One query key per recording. */
+export const transcriptKeys = {
+  transcript: (recordingId) => ['media', 'transcript', recordingId],
+};
+
+/** GET the transcript. Throws ApiError; the hook below swallows it. */
+export async function fetchRecordingTranscript(recordingId) {
+  let res;
+  try {
+    res = await fetch(recordingTranscriptPath(recordingId), {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    });
+  } catch {
+    throw new ApiError(0, 'network', 'The transcript request could not reach the server');
+  }
+  if (!res.ok) {
+    const body = await readJson(res);
+    const code = typeof body?.error === 'string' ? body.error : 'unknown';
+    throw new ApiError(res.status, code, `The transcript request was refused (${res.status})`);
+  }
+
+  const parsed = RecordingTranscriptResponseSchema.safeParse(await readJson(res));
+  if (!parsed.success) throw new ApiError(200, 'bad_response', 'Unexpected response from server');
+  return parsed.data;
+}
+
+/**
+ * This recording's transcript. A failure resolves to null rather than throwing:
+ * the transcript is something to read beside the player, and it must never be the
+ * reason a trainee cannot get on with the recording. The panel renders nothing at
+ * all when this is null — which also covers an older server that has no such
+ * endpoint and answers 404.
+ */
+export function useRecordingTranscript(recordingId) {
+  return useQuery({
+    queryKey: transcriptKeys.transcript(recordingId),
+    queryFn: async () => {
+      try {
+        return await fetchRecordingTranscript(recordingId);
+      } catch {
+        return null;
+      }
+    },
+    retry: false,
+    // A transcript is written once, by a job that finished long before this page
+    // was opened. Asking again on every window focus would re-download the whole
+    // text of every recording on the stage for no new information.
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
   });
 }

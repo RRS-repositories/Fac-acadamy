@@ -128,6 +128,101 @@ export function recordingSummaryPath(recordingId: number | string): string {
   return `/api/media/${encodeURIComponent(String(recordingId))}/summary`;
 }
 
+// ---------------------------------------------------------------------------
+// The transcript, as timed lines (migration 0010)
+// ---------------------------------------------------------------------------
+
+/**
+ * One timed line of a transcript: what was said, and between which two seconds.
+ *
+ * `start` and `end` are seconds from the start of the media — the same unit and
+ * the same origin as the player's own `currentTime` and as the intervals above,
+ * so nothing has to convert anything to line them up.
+ *
+ * Fractions, not whole seconds: faster-whisper answers to the hundredth, and
+ * rounding would make two short lines share a start and the highlight jump.
+ *
+ * `text` is the words. It is CONTENT — what was said on a real client call — so
+ * it is served only through the gated endpoint below, to a trainee who could
+ * play the recording anyway, and it is never bundled, cached by a shared cache
+ * or logged.
+ */
+/**
+ * Which of the two channels said a line: 'A' is the left channel and 'B' the
+ * right. Nothing more is claimed than that.
+ *
+ * The call recordings are true dual-channel — one person per channel, which is how
+ * the telephony system records them — so "who is talking" is a question about
+ * which channel is louder, and it is answered without any model at all
+ * (ops/media/transcribe.py). Measured across every recording we hold: the two
+ * channels are uncorrelated, never identical, and comparable over only 1-4% of the
+ * speaking seconds.
+ *
+ * DELIBERATELY NOT 'AGENT' AND 'CLIENT'. Which side the agent sits on is a
+ * property of the phone system rather than of the audio, and it is not the same on
+ * every recording we hold. Calling the louder half "the agent" would be a guess
+ * printed as a fact, and a transcript that attributes the compliance script to the
+ * client is worse than one that says "Speaker 1".
+ */
+export const TRANSCRIPT_SPEAKERS = ['A', 'B'] as const;
+export type TranscriptSpeaker = (typeof TRANSCRIPT_SPEAKERS)[number];
+
+export const TranscriptSegmentSchema = z.object({
+  start: z.number().finite().min(0),
+  end: z.number().finite().min(0),
+  text: z.string(),
+  /**
+   * OPTIONAL, and its absence is meaningful: it means nobody could tell. Either
+   * the two channels were comparable over the line (crosstalk, both at once) or
+   * the line straddles a change of speaker. A transcript made before this existed,
+   * one typed in by a person, and one of a file that turned out to be mono all
+   * have no speaker on any line — which is why every reader must cope with it
+   * missing rather than treating it as a fault.
+   */
+  speaker: z.enum(TRANSCRIPT_SPEAKERS).optional(),
+});
+export type TranscriptSegment = z.infer<typeof TranscriptSegmentSchema>;
+
+/**
+ * GET /api/media/:recordingId/transcript
+ *
+ * Three honest states, and no fourth:
+ *
+ *   `text` null                  there is no transcript. The panel says so in
+ *                                plain words and shows no empty box. Today this
+ *                                is every recording until the pipeline has run.
+ *   `text` set, `segments` []    there are words but no timings — a transcript
+ *                                typed or pasted in by a person. The panel shows
+ *                                it and says it cannot follow along, rather than
+ *                                inventing times in order to highlight something.
+ *   `text` set, `segments` set    the panel follows the audio.
+ *
+ * `status` is the pipeline's own marker (0001's transcript_status), passed
+ * through so the panel can tell "not done yet" from "tried and failed" — those
+ * are different things to say to somebody waiting for one.
+ *
+ * There is no 'disabled' state and no feature flag. A transcript that exists is
+ * shown; the flag guards whether any are MADE, which is a question for the
+ * worker and not for the reader.
+ */
+export const TRANSCRIPT_STATUSES = ['PENDING', 'DONE', 'FAILED', 'NOT_REQUIRED'] as const;
+export type TranscriptStatus = (typeof TRANSCRIPT_STATUSES)[number];
+
+export const RecordingTranscriptResponseSchema = z.object({
+  recordingId: z.number().int(),
+  status: z.enum(TRANSCRIPT_STATUSES),
+  /** The whole transcript as plain text. Null when there is none. */
+  text: z.string().nullable(),
+  /** The timed lines, in ascending order of `start`. Empty when there are none. */
+  segments: z.array(TranscriptSegmentSchema),
+});
+export type RecordingTranscriptResponse = z.infer<typeof RecordingTranscriptResponseSchema>;
+
+/** The transcript URL for a recording. One spelling, used by the client and tests. */
+export function recordingTranscriptPath(recordingId: number | string): string {
+  return `/api/media/${encodeURIComponent(String(recordingId))}/transcript`;
+}
+
 /** POST /api/manager/recordings (manager only) — what the upload created. */
 export const ManagerUploadResponseSchema = z.object({
   recordingId: z.number().int(),
