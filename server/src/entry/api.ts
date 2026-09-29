@@ -10,6 +10,7 @@ import { createMockCrmClient } from '../integrations/crm/mockCrm.js';
 import { checkRedis, createRedis } from '../integrations/redis.js';
 import { ensureMediaRoot } from '../media/root.js';
 import { createLocalMediaStore } from '../media/store.js';
+import { createOllamaSummariser } from '../media/summaryModel.js';
 import { createLoginLimiters } from '../modules/auth/limits.js';
 import {
   MemoryPendingMfaStore,
@@ -143,6 +144,30 @@ try {
   process.exit(1);
 }
 
+// Recording summaries (migration 0009). Off unless ACADEMY_CALL_SUMMARY is on,
+// and config has already refused to start if it is on without an endpoint and a
+// model name. Nothing is contacted here: the first press makes the first call.
+//
+// Worth knowing when reading the log line: the endpoint proxies most of its
+// models to a third party, so with a cloud-tagged model configured the
+// transcript of a real client call leaves the building on every FIRST press of a
+// recording (see media/summaryModel.ts). The model name is printed at start-up
+// for exactly that reason — so which one is in use is never a mystery.
+const summaryModel = config.ACADEMY_CALL_SUMMARY
+  ? createOllamaSummariser({
+      baseUrl: config.SUMMARY_MODEL_URL ?? '',
+      model: config.SUMMARY_MODEL_NAME ?? '',
+      timeoutMs: config.SUMMARY_MODEL_TIMEOUT_MS,
+    })
+  : null;
+if (summaryModel !== null) {
+  console.log(
+    `[academy-api] recording summaries: ON, model ${summaryModel.name}` +
+      ` (timeout ${String(config.SUMMARY_MODEL_TIMEOUT_MS)} ms).` +
+      ' A call transcript is sent to that model on the first press per recording.',
+  );
+}
+
 // S09 certificates. The Chromium that renders the PDFs is launched lazily by
 // the first certificate and closed in the shutdown path below, so a server
 // that never issues one never starts a browser.
@@ -160,6 +185,9 @@ const app = createApp({
     queue: jobQueue,
     maxUploadBytes: config.MEDIA_MAX_UPLOAD_MB * 1024 * 1024,
   },
+  // Spread, not `summaryModel`: exactOptionalPropertyTypes means an explicit
+  // undefined is not the same as leaving the property out.
+  ...(summaryModel === null ? {} : { summaryModel }),
   checkDb: () => checkDb(pool),
   checkRedis: () => checkRedis(redis),
   auth: {

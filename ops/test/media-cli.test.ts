@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { readEmbeddedMedia } from '../media/embedded.js';
 import { parseExtractArgs } from '../media/extract-media.js';
 import { ingestKey, parseIngestArgs } from '../media/ingest-media.js';
+import { coverageOf, parseTranscribeArgs } from '../media/transcribe.js';
 import {
   DEFAULT_MAX_MEDIA_MB,
   assertMediaFileOutsideRepo,
@@ -161,6 +162,127 @@ describe('ingest-media arguments', () => {
     expect(() => parseIngestArgs([...base.slice(0, 7), 'academy_live'])).toThrow(
       /looks like production/,
     );
+  });
+});
+
+describe('transcribe arguments and guards', () => {
+  const base = ['--expect-db', 'academy_dev'];
+
+  it('is a DRY RUN unless --commit is given', () => {
+    // The opposite way round from ingest-media, on purpose: this one walks every
+    // pending recording in the database and rewrites a column on each.
+    expect(parseTranscribeArgs(base).commit).toBe(false);
+    expect(parseTranscribeArgs([...base, '--commit']).commit).toBe(true);
+    // --dry-run is accepted and is what happens anyway; asking for both is a
+    // contradiction and is refused rather than guessed at.
+    expect(parseTranscribeArgs([...base, '--dry-run']).commit).toBe(false);
+    expect(() => parseTranscribeArgs([...base, '--dry-run', '--commit'])).toThrow(/contradict/);
+  });
+
+  it('requires --expect-db', () => {
+    expect(() => parseTranscribeArgs([])).toThrow(/--expect-db/);
+    expect(() => parseTranscribeArgs(['--expect-db', '  '])).toThrow(/--expect-db/);
+  });
+
+  it('REFUSES A PRODUCTION DATABASE unless --confirm-production is given', () => {
+    // The whole point of the backlog script is that it runs on a development
+    // machine. Reaching the live academy from it has to be deliberate, and the
+    // live database has to be named twice in two different arguments.
+    for (const name of ['client_credentials', 'academy_production', 'fac-live', 'LIVE_DB']) {
+      expect(() => parseTranscribeArgs(['--expect-db', name])).toThrow(/--confirm-production/);
+      expect(() => parseTranscribeArgs(['--expect-db', name, '--commit'])).toThrow(
+        /--confirm-production/,
+      );
+      expect(parseTranscribeArgs(['--expect-db', name, '--confirm-production']).expectDb).toBe(
+        name,
+      );
+    }
+  });
+
+  it('takes one recording, a limit and --replace, and checks the shape of each', () => {
+    expect(parseTranscribeArgs(base)).toEqual({
+      expectDb: 'academy_dev',
+      commit: false,
+      recordingId: null,
+      limit: null,
+      replace: false,
+    });
+    expect(parseTranscribeArgs([...base, '--recording', '50']).recordingId).toBe(50);
+    expect(parseTranscribeArgs([...base, '--limit', '3']).limit).toBe(3);
+    expect(parseTranscribeArgs([...base, '--replace']).replace).toBe(true);
+
+    for (const bad of ['0', '-1', 'fifty', '1.5']) {
+      expect(() => parseTranscribeArgs([...base, '--recording', bad])).toThrow(/--recording/);
+    }
+    // A blank value is "not given", the same as leaving the flag off.
+    expect(parseTranscribeArgs([...base, '--recording', '  ']).recordingId).toBeNull();
+    for (const bad of ['0', 'three', '-2']) {
+      expect(() => parseTranscribeArgs([...base, '--limit', bad])).toThrow(/--limit/);
+    }
+  });
+
+  it('refuses an unknown flag with the usage line', () => {
+    expect(() => parseTranscribeArgs([...base, '--force'])).toThrow(/Usage/);
+  });
+});
+
+describe('did the transcript cover the whole recording', () => {
+  // The check that matters after a run, because a transcription does not fail
+  // loudly when it goes wrong - it comes back SHORTER, reading perfectly well.
+  // The numbers below are the real ones from the trial of 28 Sep 2026: the good
+  // configurations covered 98.8-100% of the audio with no gap over 5 seconds, and
+  // the one that silently dropped 24% of the call covered 93% with a 19-second
+  // gap. Invented words here, real arithmetic.
+  const line = (start: number, end: number, words = 10) => ({
+    start,
+    end,
+    text: Array.from({ length: words }, () => 'word').join(' '),
+  });
+
+  it('passes a run that accounts for the whole call', () => {
+    const cover = coverageOf([line(0, 30, 70), line(30, 60, 70), line(60.5, 120, 145)], 120);
+    expect(cover.covered).toBeCloseTo(0.996, 2);
+    expect(cover.maxGap).toBeCloseTo(0.5, 5);
+    expect(cover.words).toBe(285);
+    expect(cover.wordsPerMin).toBeCloseTo(142.5, 1);
+    expect(cover.perfect).toBe(true);
+  });
+
+  it('FLAGS a run with a hole in the middle, however well it reads', () => {
+    // 19 seconds of a two-party phone call in which nobody said anything is not a
+    // silence: it is a passage the decoder walked past.
+    const cover = coverageOf([line(0, 40), line(59, 120)], 120);
+    expect(cover.maxGap).toBeCloseTo(19, 5);
+    expect(cover.perfect).toBe(false);
+  });
+
+  it('FLAGS a run that stops early, and says where it stopped', () => {
+    const cover = coverageOf([line(0, 80), line(80, 90)], 120);
+    expect(cover.spanned).toBeCloseTo(0.75, 5);
+    expect(cover.covered).toBeCloseTo(0.75, 5);
+    expect(cover.perfect).toBe(false);
+  });
+
+  it('merges overlapping lines rather than counting a second twice', () => {
+    // Whisper can hand back two segments that overlap. Adding their lengths would
+    // report more than 100% and hide a gap somewhere else.
+    const cover = coverageOf([line(0, 60), line(30, 90), line(90, 100)], 100);
+    expect(cover.covered).toBeCloseTo(1, 5);
+    expect(cover.maxGap).toBe(0);
+  });
+
+  it('claims nothing about the shares when the length is unknown', () => {
+    // No duration means the engine did not say how long the file was. Unknown is
+    // not the same as complete, so it is not called perfect.
+    const cover = coverageOf([line(0, 60)], null);
+    expect(cover.covered).toBe(0);
+    expect(cover.perfect).toBe(false);
+    expect(cover.words).toBe(10);
+  });
+
+  it('counts no words and no gap for a transcript with nothing in it', () => {
+    const cover = coverageOf([], 60);
+    expect(cover).toMatchObject({ covered: 0, maxGap: 0, words: 0, perfect: false });
   });
 });
 

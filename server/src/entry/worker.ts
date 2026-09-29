@@ -22,6 +22,8 @@ import type { Config } from '../config/env.js';
 import { createPool } from '../db/pool.js';
 import { createHandlers } from '../jobs/handlers.js';
 import { createLocalMediaStore } from '../media/store.js';
+import { createWhisperTranscriber } from '../media/transcriber.js';
+import type { Transcriber } from '../media/transcriber.js';
 import {
   createNotificationRules,
   createManagerRecipients,
@@ -113,9 +115,43 @@ const certificates = createCertificateJobHandler({
   publicBaseUrl: config.PUBLIC_BASE_URL,
 });
 
+// Speech-to-text (plan §3.3). OFF unless ACADEMY_TRANSCRIBE is true, and with it
+// off the handler logs each job and completes it exactly as the stub did — no
+// CPU is spent and nothing piles up in `waiting`. loadConfig has already refused
+// to start if the flag is on and any of the three settings is missing, so there
+// is nothing to validate here.
+//
+// The queue's concurrency is 1 and the interpreter is started at the lowest
+// priority the OS offers, which together are what makes this safe to have running
+// on a box that is already at twice its load: one recording at a time, always
+// yielding to everything else.
+const transcriber: Transcriber | null = config.ACADEMY_TRANSCRIBE
+  ? createWhisperTranscriber({
+      python: config.TRANSCRIBE_PYTHON!,
+      script: config.TRANSCRIBE_SCRIPT!,
+      model: config.TRANSCRIBE_MODEL!,
+      timeoutMs: config.TRANSCRIBE_TIMEOUT_MS,
+      // Spread rather than assigned: both are optional, and with
+      // exactOptionalPropertyTypes an explicit `undefined` is not the same as
+      // absent. Absent is what means "leave the default where it lives" — the
+      // script's for the beam, the library's for the threads.
+      ...(config.TRANSCRIBE_BEAM_SIZE === undefined
+        ? {}
+        : { beamSize: config.TRANSCRIBE_BEAM_SIZE }),
+      ...(config.TRANSCRIBE_CPU_THREADS === undefined
+        ? {}
+        : { cpuThreads: config.TRANSCRIBE_CPU_THREADS }),
+    })
+  : null;
+
 const runtime = createWorkerRuntime({
   queue,
-  handlers: createHandlers({ rules, logger: log, certificates }),
+  handlers: createHandlers({
+    rules,
+    logger: log,
+    certificates,
+    transcription: { db: pool, mediaRoot: config.MEDIA_ROOT, transcriber },
+  }),
   deadLetter,
   logger: log,
 });
@@ -126,6 +162,7 @@ const parked = await deadLetter.count().catch(() => -1);
 log.info(
   `started: ${String(runtime.workers.size)} queues (${[...runtime.workers.keys()].join(', ')})` +
     `, prefix '${queue.prefix}', notify mode '${notifier.mode}'` +
+    `, transcription ${transcriber === null ? 'off' : `on (${transcriber.name})`}` +
     `, dead-letter ${parked < 0 ? 'unreadable' : String(parked)}`,
 );
 

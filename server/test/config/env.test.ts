@@ -220,6 +220,47 @@ describe('loadConfig', () => {
     }
   });
 
+  // Recording summaries (migration 0009). The academy is live, so the whole
+  // block has to be optional and off, and an environment that has never heard of
+  // it has to start.
+  it('leaves recording summaries off, and starts perfectly with none of the settings', () => {
+    const cfg = loadConfig(validEnv());
+    expect(cfg.ACADEMY_CALL_SUMMARY).toBe(false);
+    expect(cfg.SUMMARY_MODEL_URL).toBeUndefined();
+    expect(cfg.SUMMARY_MODEL_NAME).toBeUndefined();
+    expect(cfg.SUMMARY_MODEL_TIMEOUT_MS).toBe(120_000);
+  });
+
+  it('needs an endpoint and a model name once the summary flag is on', () => {
+    const on = { ...validEnv(), ACADEMY_CALL_SUMMARY: 'true' };
+    expect(configError(on).missing).toEqual(['SUMMARY_MODEL_NAME', 'SUMMARY_MODEL_URL']);
+    expect(configError({ ...on, SUMMARY_MODEL_URL: 'http://127.0.0.1:11434' }).missing).toEqual([
+      'SUMMARY_MODEL_NAME',
+    ]);
+
+    const cfg = loadConfig({
+      ...on,
+      SUMMARY_MODEL_URL: 'http://127.0.0.1:11434',
+      SUMMARY_MODEL_NAME: 'a-model',
+      SUMMARY_MODEL_TIMEOUT_MS: '30000',
+    });
+    expect(cfg.ACADEMY_CALL_SUMMARY).toBe(true);
+    expect(cfg.SUMMARY_MODEL_URL).toBe('http://127.0.0.1:11434');
+    expect(cfg.SUMMARY_MODEL_NAME).toBe('a-model');
+    expect(cfg.SUMMARY_MODEL_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it('rejects a summary URL that is not a URL and a silly timeout', () => {
+    expect(configError({ ...validEnv(), SUMMARY_MODEL_URL: 'not-a-url' }).invalid).toEqual([
+      'SUMMARY_MODEL_URL',
+    ]);
+    for (const bad of ['0', '999', '1200000', 'soon']) {
+      expect(configError({ ...validEnv(), SUMMARY_MODEL_TIMEOUT_MS: bad }).invalid).toEqual([
+        'SUMMARY_MODEL_TIMEOUT_MS',
+      ]);
+    }
+  });
+
   it('defaults COOKIE_SECURE to true in production and false elsewhere', () => {
     expect(loadConfig(validEnv()).COOKIE_SECURE).toBe(false);
     const prod = validProdEnv();
@@ -282,6 +323,37 @@ describe('loadConfig: the production-only rules', () => {
     expect(
       configError({ ...validProdEnv(), PUBLIC_BASE_URL: 'http://academy.example.invalid' }).invalid,
     ).toEqual(['PUBLIC_BASE_URL']);
+  });
+
+  // The request body sent to the summary model is the transcript of a real
+  // client call. On this machine, http never puts it on a wire; anywhere else in
+  // production it must be https.
+  it('allows http for a summary model on this machine and refuses it elsewhere', () => {
+    const base = {
+      ...validProdEnv(),
+      ACADEMY_CALL_SUMMARY: 'true',
+      SUMMARY_MODEL_NAME: 'a-model',
+    };
+    for (const url of [
+      'http://127.0.0.1:11434',
+      'http://localhost:11434',
+      'https://models.example.invalid',
+    ]) {
+      expect(loadConfig({ ...base, SUMMARY_MODEL_URL: url }).SUMMARY_MODEL_URL).toBe(url);
+    }
+    expect(
+      configError({ ...base, SUMMARY_MODEL_URL: 'http://models.example.invalid' }).invalid,
+    ).toEqual(['SUMMARY_MODEL_URL']);
+    // Outside production the same value is accepted: a laptop talking to a box
+    // on the LAN is not the thing this rule is about.
+    expect(
+      loadConfig({
+        ...validEnv(),
+        ACADEMY_CALL_SUMMARY: 'true',
+        SUMMARY_MODEL_NAME: 'a-model',
+        SUMMARY_MODEL_URL: 'http://models.example.invalid',
+      }).SUMMARY_MODEL_URL,
+    ).toBe('http://models.example.invalid');
   });
 
   // Documented, not endorsed: production accepts COOKIE_SECURE=false, which

@@ -20,6 +20,7 @@ import { pgConfig } from '../../../src/db/connection.js';
 import type { DbSettings } from '../../../src/db/connection.js';
 import { applyMigrations, settingsFromEnv } from '../../../src/db/migrate.js';
 import type { MediaStore } from '../../../src/media/store.js';
+import type { SummaryModel } from '../../../src/media/summaryModel.js';
 import { createLoginLimiters, emailAuditKey } from '../../../src/modules/auth/limits.js';
 import type { LoginLimitSettings } from '../../../src/modules/auth/limits.js';
 import {
@@ -116,6 +117,14 @@ export interface Db {
      * POST /api/manager/recordings (the manager upload).
      */
     mediaUpload?: { queue: JobQueue; maxUploadBytes: number };
+    /**
+     * The model that writes a recording's one saved summary (migration 0009).
+     * Left out, the summary routes are still mounted and answer
+     * `{ state: 'disabled' }` — which is what ACADEMY_CALL_SUMMARY=false looks
+     * like, and what every suite except the summary one wants. No test ever
+     * passes a real model: the stub counts its calls.
+     */
+    summaryModel?: SummaryModel;
   }): Harness;
   cleanup(): Promise<void>;
 }
@@ -164,6 +173,7 @@ export async function openTestDb(): Promise<Db> {
         // means an explicit undefined is not the same as leaving it out.
         ...(opts.mediaStore === undefined ? {} : { mediaStore: opts.mediaStore }),
         ...(opts.mediaUpload === undefined ? {} : { mediaUpload: opts.mediaUpload }),
+        ...(opts.summaryModel === undefined ? {} : { summaryModel: opts.summaryModel }),
         flagEnabled: opts.flagEnabled ?? true,
         checkDb: () => Promise.resolve(true),
         checkRedis: () => Promise.resolve(false),

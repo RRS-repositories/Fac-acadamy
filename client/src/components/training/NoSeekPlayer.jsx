@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MEDIA_BEACON_INTERVAL_MS } from '@fac-academy/shared';
 import { mediaStreamPath, useListenReporter } from '../../api/media.js';
+import RecordingSummary from './RecordingSummary.jsx';
+import RecordingTranscript from './RecordingTranscript.jsx';
 import { badgeBase, badgeTone, cardClass } from './styles.js';
 
 /*
@@ -257,6 +259,30 @@ export default function NoSeekPlayer({ recording, stageCode }) {
     }
   }, []);
 
+  /**
+   * The ONLY way anything outside this player may move the position, and it goes
+   * one way: BACKWARDS.
+   *
+   * The transcript panel calls it when somebody clicks a line they have already
+   * heard, which is a reasonable thing to want — reading a passage again — and
+   * exactly what the no-seek rule was never about. What it must never become is a
+   * way round that rule, so a target that is not strictly behind the play head is
+   * refused here and nothing happens. The panel also disables the lines ahead, so
+   * this is the second of three locks; the third is `onSeeking` below, which snaps
+   * a forward jump back however it was caused.
+   *
+   * Playing a passage again costs nothing and buys nothing: `furthest` does not
+   * move, and the coverage the server credits is a set of intervals, so hearing
+   * 2:00-2:30 twice is still one 30-second stretch.
+   */
+  const seekBack = useCallback((seconds) => {
+    const el = mediaRef.current;
+    if (el === null) return;
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    if (seconds >= el.currentTime) return;
+    el.currentTime = seconds;
+  }, []);
+
   const onSeeked = useCallback(() => {
     const el = mediaRef.current;
     if (el === null) return;
@@ -380,6 +406,27 @@ export default function NoSeekPlayer({ recording, stageCode }) {
           listening.
         </p>
       ) : null}
+
+      {/*
+        Under the player, because that is where somebody looks after deciding
+        whether to listen. It renders nothing at all unless the server says the
+        feature is on, and it never touches playback or the listened badge: the
+        full listen is still the only thing that unlocks the quiz.
+      */}
+      <RecordingSummary recordingId={recording.id} mediaType={recording.mediaType} />
+
+      {/*
+        The transcript, under the summary, because reading along is what somebody
+        does once they have decided to listen. It is handed the play head and the
+        one seek it is allowed to ask for; it cannot reach the media element, and
+        `seekBack` refuses anything that is not strictly backwards.
+      */}
+      <RecordingTranscript
+        recordingId={recording.id}
+        mediaType={recording.mediaType}
+        position={position}
+        onSeekBack={seekBack}
+      />
     </li>
   );
 }

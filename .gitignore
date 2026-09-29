@@ -50,5 +50,10 @@ Thumbs.db
 !.vscode/extensions.json
 *.log
 
+# Python bytecode. ops/media/transcribe.py is run by an interpreter outside the
+# repo, and importing it (a test, a probe) leaves a cache beside it.
+__pycache__/
+*.py[cod]
+
 # Vite dependency cache (created when the dev server runs outside node_modules)
 .vite/

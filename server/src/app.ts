@@ -9,6 +9,9 @@ import { certVerifyRouter } from './certs/verify.routes.js';
 import { mediaProgressRouter } from './media/progress.js';
 import { mediaStreamRouter } from './media/routes.js';
 import type { MediaStore } from './media/store.js';
+import { mediaSummaryRouter } from './media/summary.js';
+import { mediaTranscriptRouter } from './media/transcript.js';
+import type { SummaryModel } from './media/summaryModel.js';
 import { managerUploadRouter } from './media/upload.js';
 import { requireAcademyFlag } from './middleware/flag.js';
 import { authRouter } from './modules/auth/routes.js';
@@ -57,6 +60,14 @@ export interface AppDeps {
    * draft-question jobs go on, and MEDIA_MAX_UPLOAD_MB already in bytes.
    */
   mediaUpload?: { queue: JobQueue; maxUploadBytes: number };
+  /**
+   * The model that writes a recording's one saved summary (migration 0009).
+   * Given together with `training`, the summary routes use it; left out — which
+   * is what ACADEMY_CALL_SUMMARY=false means — the routes still exist and answer
+   * `{ state: 'disabled' }`, so the browser can tell "switched off" from "no such
+   * recording" and the button simply never appears.
+   */
+  summaryModel?: SummaryModel;
   /**
    * S09 certificates. Given together with `auth` and `mediaStore`, it mounts
    * GET /api/certs and GET /api/certs/:publicId/download (signed in), and the
@@ -135,6 +146,19 @@ export function createApp(deps: AppDeps): Express {
     if (deps.mediaStore !== undefined) {
       app.use('/api/media', mediaStreamRouter({ ...deps.training, store: deps.mediaStore }));
     }
+    // The one saved summary of what was said on a recording (0009). Mounted
+    // whether or not a model is configured: with none it answers 'disabled',
+    // which is the honest answer and the one the client needs to hide the button.
+    app.use(
+      '/api/media',
+      mediaSummaryRouter({ ...deps.training, model: deps.summaryModel ?? null }),
+    );
+    // The transcript, as timed lines, for the panel under the player (0010).
+    // Read-only, and behind the same requireAuth and the same gate() as the bytes
+    // themselves: a transcript is the content of the call written down. No flag
+    // and no 'disabled' state — a transcript that exists is shown to somebody who
+    // may hear it anyway; whether any are MADE is the worker's question.
+    app.use('/api/media', mediaTranscriptRouter(deps.training));
   }
 
   // S09: the signed-in half — the trainee's own certificates and the PDF

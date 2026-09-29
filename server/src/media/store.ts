@@ -114,6 +114,28 @@ function isMissing(err: unknown): boolean {
 }
 
 /**
+ * The absolute path of one key under one media root, proven to be inside it.
+ *
+ * Exported because two things outside the store need the PATH rather than a
+ * stream: the transcriber hands a local file to a local interpreter (there is no
+ * way to give a Python process a Readable and no reason to copy a 30 MB call to
+ * a temporary file first), and the backlog script does the same. Both go through
+ * this one function, so a crafted key is refused by the same rule that guards
+ * every read and write — `assertSafeKey` first, then a proof that the resolved
+ * path really is under the root.
+ */
+export function localPathFor(root: string, key: string): string {
+  const base = resolve(root);
+  assertSafeKey(key);
+  const full = resolve(base, key);
+  if (full !== base && !full.startsWith(base + sep)) {
+    throw new MediaKeyError(key, 'escapes the media root');
+  }
+  if (full === base) throw new MediaKeyError(key, 'is the media root itself');
+  return full;
+}
+
+/**
  * Files under `root`, one file per key. `root` is resolved once here, so every
  * later comparison is between two absolute, normalised paths.
  */
@@ -122,13 +144,7 @@ export function createLocalMediaStore(root: string): MediaStore {
 
   /** The absolute path for a key, proven to be inside `base`. */
   function pathFor(key: string): string {
-    assertSafeKey(key);
-    const full = resolve(base, key);
-    if (full !== base && !full.startsWith(base + sep)) {
-      throw new MediaKeyError(key, 'escapes the media root');
-    }
-    if (full === base) throw new MediaKeyError(key, 'is the media root itself');
-    return full;
+    return localPathFor(base, key);
   }
 
   return {

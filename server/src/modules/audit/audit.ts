@@ -38,6 +38,11 @@ export const AUDIT_EVENTS = [
   'LISTEN_COMPLETE',
   // S06: a manager added a recording or a screen recording to a stage.
   'MEDIA_UPLOADED',
+  // The one saved summary of a recording (migration 0009): written once, on the
+  // press that actually called the model — never on the thousands of presses
+  // afterwards that are served the stored text. The payload names the model and
+  // counts characters; it never carries the transcript or the summary itself.
+  'RECORDING_SUMMARISED',
   'QUIZ_SUBMIT',
   'STAGE_PASS',
   'LEVEL_PASS',
