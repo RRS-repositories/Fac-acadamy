@@ -1,4 +1,11 @@
-import { getJson, getQuiz, getStage, getTrack, readLesson } from '../helpers/api.js';
+import {
+  fastForwardListening,
+  getJson,
+  getQuiz,
+  getStage,
+  getTrack,
+  readLesson,
+} from '../helpers/api.js';
 import { allContentText, lessonIdsForStage } from '../helpers/db.js';
 import { canaryFor, contentCanaries, piiCanaries, scan } from '../helpers/canaries.js';
 import { expect, test } from '../helpers/test.js';
@@ -73,6 +80,11 @@ test('no response, and no seeded content, carries a real person from the prototy
   for (const lessonId of await lessonIdsForStage(open!.code)) {
     expect(await readLesson(staffPage, lessonId)).toBe(204);
   }
+  // The quiz payload has to be swept, and the open stage's quiz will not open
+  // until its call recordings have been heard in full. The sweep is what is
+  // under test, so the listening gate is fast-forwarded rather than sat
+  // through; journey-cs.spec.ts pays it for real against the fixture.
+  await fastForwardListening(staffPage, open!.code);
   const quiz = await getQuiz(staffPage, open!.code);
   expect(quiz.status).toBe(200);
   sweep(`GET /api/stage/${open!.code}/quiz`, quiz.text);

@@ -229,7 +229,19 @@ export async function applyMigrations(opts: ApplyOptions): Promise<ApplyResult> 
         [LOCK_KEY],
       );
       if (!lock.rows[0]?.ok) throw new MigrationError('Another migration run holds the lock.');
-      await client.query('CREATE SCHEMA IF NOT EXISTS academy');
+      // Only CREATE the schema when it genuinely is not there.
+      //
+      // `CREATE SCHEMA IF NOT EXISTS` is not free: PostgreSQL checks the
+      // CREATE privilege on the DATABASE before it checks whether the schema
+      // already exists, so on an existing schema this no-op still fails with
+      // "permission denied for database client_credentials". In production the
+      // academy shares the CRM's database and its migration login deliberately
+      // has no rights over that database as a whole — the schema was created
+      // once, by hand, by an admin. Asking for CREATE here meant granting that
+      // privilege on the CRM's own database just to run a no-op, which was
+      // done and hurriedly revoked twice before this comment existed.
+      const ns = await client.query('SELECT 1 FROM pg_namespace WHERE nspname = $1', ['academy']);
+      if (ns.rowCount === 0) await client.query('CREATE SCHEMA academy');
       await client.query(`CREATE TABLE IF NOT EXISTS ${LEDGER} (
         filename   text PRIMARY KEY,
         sha256     text NOT NULL,

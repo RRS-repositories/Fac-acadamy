@@ -1,5 +1,5 @@
 import type { APIRequestContext, Page } from '@playwright/test';
-import { correctAnswersForStage, lessonIdsForStage } from './db.js';
+import { correctAnswersForStage, creditFullListen, lessonIdsForStage } from './db.js';
 import type { Answer } from './db.js';
 
 // Thin wrappers over the API, used from a signed-in page's own request context
@@ -10,7 +10,9 @@ import type { Answer } from './db.js';
 //     answers a locked stage with, what the quiz JSON does and does not carry;
 //   * fast-forward — walking an account through stages the spec is not there
 //     to watch. Those calls are the REAL endpoints with the REAL grading; the
-//     only thing skipped is the clicking.
+//     only thing skipped is the clicking, and — since the core stages gained
+//     real call recordings — the sitting through them (see
+//     `fastForwardListening` below, and `creditFullListen` in db.ts).
 
 export interface ApiResult<T = unknown> {
   status: number;
@@ -162,14 +164,63 @@ export async function beacon(
 // ---------------------------------------------------------------------------
 
 /**
+ * The trainee id of the session whose cookies this page holds, straight from
+ * the app. Fast-forward reads it rather than taking one from the caller, so
+ * the state it writes can only ever be the leased account's own.
+ */
+async function sessionTraineeId(page: Page): Promise<number> {
+  const me = await getJson<{ me: { id: number } }>(page, '/api/me');
+  const id = me.body?.me?.id;
+  if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) {
+    throw new Error(`e2e: GET /api/me did not name a trainee (${String(me.status)}).`);
+  }
+  return id;
+}
+
+/**
+ * Credits a full listen of every playable recording on a stage to the signed-in
+ * account, so a fast-forward can get past a gate it is not there to watch.
+ *
+ * This is a SKIP, and it is the same kind of skip the rest of this file makes.
+ * Fast-forward already declines to click through lessons and quiz pages; what
+ * it can never decline is the server's grading, and nothing here touches that.
+ * The listening gate is different from the other two only in that it cannot be
+ * paid quickly even through the API — it is bound to cumulative wall clock on
+ * purpose, and the real recordings on the core stages run to seventeen minutes
+ * — so the per-trainee state behind it is written directly instead. db.ts's
+ * `creditFullListen` explains the shape, and why it is the shape a real listen
+ * leaves behind.
+ *
+ * The rule itself is still proved, in full and through the real beacon
+ * endpoint, by journey-cs.spec.ts against the 20-second fixture recording that
+ * ops/dev/e2e-prepare.ts installs on s4. That spec passes the fixture's id in
+ * `except`, so no pre-credit ever reaches the recording it listens to.
+ *
+ * It returns the recording ids it credited, so a spec that depends on one
+ * being left alone can assert that rather than trust it.
+ */
+export async function fastForwardListening(
+  page: Page,
+  code: string,
+  options: { except?: readonly number[] } = {},
+): Promise<number[]> {
+  return creditFullListen(await sessionTraineeId(page), code, options);
+}
+
+/**
  * Walks an account through whole stages using the real endpoints: every lesson
  * marked read, then the quiz answered correctly and graded by the server. Used
  * only to reach the stage a spec is actually about.
+ *
+ * The listening gate on the way is pre-credited rather than sat through — see
+ * `fastForwardListening`. Only the stages named here are touched, so a stage a
+ * spec means to listen to for real is never one of them.
  *
  * Throws with a useful message if anything refuses, so a broken fast-forward
  * can never be mistaken for a passing test.
  */
 export async function fastForwardStages(page: Page, codes: readonly string[]): Promise<void> {
+  const traineeId = await sessionTraineeId(page);
   for (const code of codes) {
     const stage = await getStage(page, code);
     if (stage.status !== 200) {
@@ -184,6 +235,7 @@ export async function fastForwardStages(page: Page, codes: readonly string[]): P
         );
       }
     }
+    await creditFullListen(traineeId, code);
     const answers = await correctAnswersForStage(code);
     const submitted = await submitQuiz(page, code, answers);
     if (submitted.status !== 200 || !submitted.body.passed) {

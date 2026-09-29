@@ -1,4 +1,11 @@
-import { beacon, fastForwardStages, getQuiz, getStage, readLesson } from '../helpers/api.js';
+import {
+  beacon,
+  fastForwardListening,
+  fastForwardStages,
+  getQuiz,
+  getStage,
+  readLesson,
+} from '../helpers/api.js';
 import type { BeaconBody } from '../helpers/api.js';
 import {
   correctAnswersForStage,
@@ -25,6 +32,11 @@ import { expect, test } from '../helpers/test.js';
 //    minutes, and no suite can sit through those; what this proves about them
 //    instead is at the end, where a real 7-minute recording is streamed (and
 //    its stage's quiz is still refused, because nobody has listened to it).
+//    s4's own two seeded recordings are pre-credited for this account and this
+//    account only (`fastForwardListening`, with the FIXTURE deliberately left
+//    out of it), so the last thing standing between the trainee and the quiz
+//    is the fixture — and the only way past it is the real gate, paid in real
+//    seconds through the real beacon endpoint, below.
 //  * The answers come out of the database. A test cannot pass a quiz honestly
 //    without knowing them, and the point here is the journey, not guessing.
 
@@ -99,6 +111,21 @@ test('a Customer Service trainee: lessons, a real listen, a fail, a retake, the 
   }
 
   // --- now the recordings are what is in the way ------------------------
+  // s4 carries two of the seeded calls as well as the fixture, and they are
+  // six and four minutes long. They are credited here so that the ONE
+  // recording left unheard is the 20-second fixture: everything below this
+  // line — the refused skip, the honest listen, the badge, the quiz opening —
+  // is then about the real rule on the real endpoint, and nothing about it is
+  // relaxed. `except` keeps the fixture out of the pre-credit; if that ever
+  // stopped being true this test would pass without listening to anything,
+  // which is exactly what it exists to prevent.
+  const credited = await fastForwardListening(page, STAGE, { except: [fixture.recordingId] });
+  expect(
+    credited,
+    'the fixture recording must never be pre-credited: this test has to listen to it',
+  ).not.toContain(fixture.recordingId);
+  expect(credited.length, 'the seeded s4 recordings were credited').toBeGreaterThan(0);
+
   stage = await getStage(page, STAGE);
   expect(stage.body.quiz.unlocked).toBe(false);
   expect(stage.body.quiz.blockedBy).toBe('recordings');
