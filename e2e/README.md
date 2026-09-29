@@ -131,11 +131,24 @@ manager spec needs is the practical ceiling.
 * Quiz answers come out of the database (`helpers/db.ts`) because a test cannot
   pass a quiz honestly without knowing them. Nothing else about the run is read
   from the tables: every claim about behaviour is made through the app.
-* The listening gate is paid in real time. The test sends beacons at the pace
-  the server's wall-clock rule accepts, and first proves that one beacon
-  claiming the whole recording buys only the seconds that have actually passed.
-  It uses the 20-second fixture because the seeded recordings run from six to
-  seventeen minutes; the rule under test is the real one, unchanged.
+* The listening gate is paid in real time — once, properly, in
+  `journey-cs.spec.ts`. The test sends beacons at the pace the server's
+  wall-clock rule accepts, and first proves that one beacon claiming the whole
+  recording buys only the seconds that have actually passed. It uses the
+  20-second fixture because the seeded recordings run from six to seventeen
+  minutes; the rule under test is the real one, unchanged.
+* Everywhere else the gate is **fast-forwarded**, because the core stages now
+  carry real six- to seventeen-minute calls and the rule is bound to cumulative
+  wall clock on purpose (`server/src/media/coverage.ts`, migration 0008): there
+  is no quick honest way past it, by design. `helpers/db.ts`'s
+  `creditFullListen` writes the `academy.listen_progress` row a finished listen
+  leaves behind — the same shape the beacon route writes, for one trainee id
+  and no other — so a spec that is about something else can reach the quiz.
+  It is the same skip the suite already makes for the clicking of lessons and
+  quiz pages, and it never touches the server's grading. The one spec that
+  proves the gate names the fixture recording in `except`, so the pre-credit
+  can never reach the recording it has to listen to — and asserts that it did
+  not, rather than trusting it.
 * The PII and bundle sweeps hold hashes only. `tools/make-pii-canaries.ts`
   rebuilds `fixtures/pii-canaries.json` from the prototype and prints labels and
   lengths, never the strings:

@@ -265,6 +265,92 @@ export async function resetTrainee(traineeId: number, track: string | null): Pro
   }
 }
 
+/**
+ * Marks every playable recording of a stage fully listened, for ONE trainee.
+ * The listening gate's equivalent of `readLesson` in the fast-forward: it is
+ * set-up, never an assertion, and it is only ever used to reach a stage a spec
+ * is not there to watch.
+ *
+ * Why it cannot be done through the beacon endpoint. The gate is deliberately
+ * bound to cumulative wall clock (server/src/media/coverage.ts, and the
+ * first_beacon_at column migration 0008 added for it): the media time credited
+ * to a listen may never exceed the real time that has passed since that
+ * listen's first beacon. The core stages now carry real call recordings of six
+ * to seventeen minutes, so paying that gate honestly on the way past s1 would
+ * cost the suite the better part of an hour. The rule is the point and it is
+ * not weakened here — the same skip the suite already makes for lessons and
+ * quizzes in `fastForwardStages` is simply extended to listening, by writing
+ * the per-trainee state a completed listen leaves behind.
+ *
+ * What it writes is the row the real beacon route writes, in the same shape,
+ * so nothing downstream can tell the two apart: coverage is the single
+ * interval [0, duration] that `spansDuration` accepts, `seconds_heard` is that
+ * total rounded as progress.ts rounds it, `completed_at` is what `gate()` and
+ * `loadQuizPrerequisite` actually read, and `first_beacon_at` is set a full
+ * duration in the past — which is exactly where an honest listen of that
+ * length would have started it, and which leaves any later real beacon on the
+ * recording with the same budget it would have had anyway. `first_beacon_at`
+ * and `completed_at` are written with COALESCE, as progress.ts writes them, so
+ * a listen already under way keeps the clock it started on.
+ *
+ * `except` is how the one spec that proves the real thing keeps proving it:
+ * journey-cs.spec.ts listens to the 20-second fixture recording on s4 through
+ * the real beacon endpoint, at the pace the real rule allows, so that
+ * recording is named here and its state is never written by this helper.
+ *
+ * Scoped to the one trainee id: the primary key of academy.listen_progress is
+ * (trainee_id, recording_id) and both are bound parameters, so no statement
+ * here can reach a row belonging to another account. The connection itself is
+ * the local-only `db()` pool, which refuses any database whose name does not
+ * look like a developer's.
+ */
+export async function creditFullListen(
+  traineeId: number,
+  code: string,
+  options: { except?: readonly number[] } = {},
+): Promise<number[]> {
+  const except = new Set(options.except ?? []);
+  const targets = (await playableRecordings(code)).filter((r) => !except.has(r.id));
+  const credited: number[] = [];
+  for (const { id, durationSecs } of targets) {
+    if (durationSecs === null || !Number.isFinite(durationSecs) || durationSecs <= 0) {
+      // A recording of unknown length can never be listened in full — the
+      // server's `spansDuration` has no end to reach — so a row claiming it was
+      // would be a state no beacon could ever produce. Better to stop and say
+      // so than to invent one.
+      throw new Error(
+        `e2e: recording ${String(id)} on ${code} has no duration, so a full listen of it ` +
+          'cannot be represented. The seed is wrong, not the test.',
+      );
+    }
+    const now = Date.now();
+    await db().query(
+      `INSERT INTO academy.listen_progress
+         (trainee_id, recording_id, seconds_heard, coverage,
+          first_beacon_at, last_beacon_at, completed_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6::timestamptz, $6::timestamptz)
+       ON CONFLICT (trainee_id, recording_id) DO UPDATE
+          SET seconds_heard   = EXCLUDED.seconds_heard,
+              coverage        = EXCLUDED.coverage,
+              first_beacon_at = COALESCE(academy.listen_progress.first_beacon_at,
+                                         EXCLUDED.first_beacon_at),
+              last_beacon_at  = EXCLUDED.last_beacon_at,
+              completed_at    = COALESCE(academy.listen_progress.completed_at,
+                                         EXCLUDED.completed_at)`,
+      [
+        traineeId,
+        id,
+        Math.round(durationSecs),
+        JSON.stringify([[0, durationSecs]]),
+        new Date(now - durationSecs * 1000).toISOString(),
+        new Date(now).toISOString(),
+      ],
+    );
+    credited.push(id);
+  }
+  return credited;
+}
+
 /** Set-up only. The manager UI doing this for real is manager.spec.ts's job. */
 export async function setTrack(traineeId: number, track: string): Promise<void> {
   await db().query('UPDATE academy.trainees SET track = $2 WHERE id = $1', [traineeId, track]);

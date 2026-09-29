@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
-import { fastForwardStages, getJson, getQuiz, getTrack, readLesson } from '../helpers/api.js';
+import {
+  fastForwardListening,
+  fastForwardStages,
+  getJson,
+  getQuiz,
+  getTrack,
+  readLesson,
+} from '../helpers/api.js';
 import { certificatesOf, lessonIdsForStage } from '../helpers/db.js';
 import { expectedStages } from '../helpers/expected.js';
 import { chooseAnswers, submitAnswers } from '../helpers/quiz.js';
@@ -67,7 +74,7 @@ test('an Admin trainee: the core, the department modules, the banner, the certif
   const s6 = await getQuiz(page, 's6');
   expect(s6.status, 'the quiz is blocked until the lessons are read').toBe(403);
   expect(s6.body).toEqual({ error: 'lessons_incomplete' });
-  await fastForwardLessonsOnly(page, 's6');
+  await fastForwardToQuiz(page, 's6');
 
   const loaded = await getQuiz(page, 's6');
   expect(loaded.status).toBe(200);
@@ -145,7 +152,7 @@ test('an Admin trainee: the core, the department modules, the banner, the certif
   // --- the department modules --------------------------------------------
   // The first one in the browser, question by question.
   const firstModule = modules[0]!;
-  await fastForwardLessonsOnly(page, firstModule);
+  await fastForwardToQuiz(page, firstModule);
   const firstQuiz = await getQuiz(page, firstModule);
   expect(firstQuiz.status).toBe(200);
   await page.goto(`/stage/${firstModule}/quiz`);
@@ -188,9 +195,16 @@ test('an Admin trainee: the core, the department modules, the banner, the certif
   await expect(page.getByRole('listitem')).toHaveCount(2);
 });
 
-/** Marks every lesson of a stage read, leaving the quiz as the only step left. */
-async function fastForwardLessonsOnly(page: Page, code: string): Promise<void> {
+/**
+ * Clears everything in front of a stage's quiz, leaving the quiz itself as the
+ * only step: every lesson marked read through the real endpoint, and the
+ * listening gate fast-forwarded. This journey is about the certificates, not
+ * about listening — the listening rule is paid in real seconds, through the
+ * real beacon endpoint, in journey-cs.spec.ts.
+ */
+async function fastForwardToQuiz(page: Page, code: string): Promise<void> {
   for (const lessonId of await lessonIdsForStage(code)) {
     expect(await readLesson(page, lessonId), `POST /api/lesson/${String(lessonId)}/read`).toBe(204);
   }
+  await fastForwardListening(page, code);
 }

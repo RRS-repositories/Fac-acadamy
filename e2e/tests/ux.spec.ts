@@ -1,4 +1,4 @@
-import { readLesson } from '../helpers/api.js';
+import { fastForwardListening, readLesson } from '../helpers/api.js';
 import { lessonIdsForStage } from '../helpers/db.js';
 import { expect, test } from '../helpers/test.js';
 
@@ -24,6 +24,10 @@ test.describe('scroll rules', () => {
     for (const lessonId of await lessonIdsForStage(STAGE)) {
       expect(await readLesson(page, lessonId)).toBe(204);
     }
+    // s1's quiz is also behind the listening gate, and this test is about
+    // whether the page moves under the pointer. The gate is fast-forwarded to
+    // get to the quiz; journey-cs.spec.ts is where it is paid for real.
+    await fastForwardListening(page, STAGE);
 
     await page.goto(`/stage/${STAGE}/quiz`);
     const cards = page.getByTestId('question-card');

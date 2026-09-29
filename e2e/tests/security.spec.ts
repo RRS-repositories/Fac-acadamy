@@ -1,7 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { getJson, getQuiz, postJson, putJson, readLesson } from '../helpers/api.js';
+import {
+  fastForwardListening,
+  getJson,
+  getQuiz,
+  postJson,
+  putJson,
+  readLesson,
+} from '../helpers/api.js';
 import { lessonIdsForStage, playableRecordings } from '../helpers/db.js';
 import { REPO_ROOT } from '../helpers/env.js';
 import { requireFixture } from '../helpers/state.js';
@@ -85,6 +92,12 @@ test.describe('nothing that should stay on the server reaches the browser', () =
     for (const lessonId of await lessonIdsForStage(STAGE)) {
       expect(await readLesson(staffPage, lessonId)).toBe(204);
     }
+    // s1 carries real call recordings, and its quiz stays shut until they have
+    // been heard end to end. What is under test here is the SHAPE of the quiz
+    // payload, not the listening gate, so the gate is fast-forwarded rather
+    // than sat through — the gate itself is proved in journey-cs.spec.ts,
+    // against the fixture recording, through the real beacon endpoint.
+    await fastForwardListening(staffPage, STAGE);
     const quiz = await getQuiz(staffPage, STAGE);
     expect(quiz.status).toBe(200);
     expect(quiz.body.questions.length).toBeGreaterThan(0);

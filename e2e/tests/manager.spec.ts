@@ -1,5 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { fastForwardStages, getJson, getTrack, readLesson, submitQuiz } from '../helpers/api.js';
+import {
+  fastForwardListening,
+  fastForwardStages,
+  getJson,
+  getTrack,
+  readLesson,
+  submitQuiz,
+} from '../helpers/api.js';
 import { lessonIdsForStage, wrongAnswersForStage } from '../helpers/db.js';
 import { expectedStages } from '../helpers/expected.js';
 import { expect, test } from '../helpers/test.js';
@@ -83,6 +90,11 @@ test('the roster shows a trainee, their attempts and who is online', async ({
   for (const lessonId of await lessonIdsForStage('s1')) {
     expect(await readLesson(staffPage, lessonId)).toBe(204);
   }
+  // The attempt is the point here, and s1's quiz will not open until its real
+  // call recordings have been heard in full. That gate is fast-forwarded, the
+  // same way this spec fast-forwards lessons — it is proved for real, through
+  // the beacon endpoint, in journey-cs.spec.ts.
+  await fastForwardListening(staffPage, 's1');
   const failed = await submitQuiz(staffPage, 's1', await wrongAnswersForStage('s1'));
   expect(failed.status).toBe(200);
   expect(failed.body.passed).toBe(false);
