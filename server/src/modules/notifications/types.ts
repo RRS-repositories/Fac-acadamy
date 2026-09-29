@@ -19,7 +19,7 @@ export type NotifyMode = (typeof NOTIFY_MODES)[number];
 export const NOTIFICATION_KINDS = {
   /** A level was finished. Level 1 is the "ready to start work" one. */
   levelComplete: 'LEVEL_COMPLETE',
-  /** Both modules of a department academy were finished. */
+  /** Every module of a department academy was finished. */
   deptComplete: 'DEPT_COMPLETE',
   /** Three fails in a row on one stage. ONE message, not three. */
   stageFailStreak: 'STAGE_FAIL_STREAK',

@@ -70,7 +70,27 @@ export function parseTrackSweepArgs(argv: string[]): TrackSweepArgs | 'help' {
 // ---------------------------------------------------------------------------
 // The fixture (ops/fixtures/expected-track-visibility.json): typed by hand from
 // PROJECT-PLAN §1, and the independent oracle for both lists below.
+//
+// The fixture has two halves, and this sweep looks at a DEVELOPMENT database
+// that holds both of them:
+//
+//   * the nine track arrays are PROTOTYPE content only, and have to stay that
+//     way — ops/seed/seed-content.ts and ops/seed/verify-seed.ts compare the
+//     prototype's own rows against them;
+//   * `packStages` is what a content pack adds to a track, each entry naming
+//     the stage it follows and how many questions it brings.
+//
+// So the expectation below is the two composed, the same rule e2e/helpers/
+// expected.ts uses: the prototype's order with each pack stage inserted after
+// its anchor. Both halves are hand-typed, so this stays an oracle rather than a
+// reading of the table it is checking.
 // ---------------------------------------------------------------------------
+
+interface PackStage {
+  code: string;
+  after: string;
+  questions: number;
+}
 
 export interface TrackFixture {
   stages: Record<DevTrack, readonly string[]>;
@@ -82,6 +102,7 @@ export function loadTrackFixture(file = FIXTURE_FILE): TrackFixture {
   const stages = {} as Record<DevTrack, readonly string[]>;
   const questionsPerTrack = {} as Record<DevTrack, number>;
   const perTrack = raw['questionsPerTrack'] as Record<string, unknown> | undefined;
+  const packs = (raw['packStages'] ?? {}) as Record<string, unknown>;
   for (const t of DEV_TRACKS) {
     const list = raw[t];
     if (!Array.isArray(list) || !list.every((v) => typeof v === 'string')) {
@@ -93,8 +114,27 @@ export function loadTrackFixture(file = FIXTURE_FILE): TrackFixture {
         `expected-track-visibility.json: questionsPerTrack.${t} must be a number`,
       );
     }
-    stages[t] = list as string[];
-    questionsPerTrack[t] = q;
+    const composed = [...(list as string[])];
+    let questions = q;
+    const mine = packs[t];
+    if (mine !== undefined) {
+      if (!Array.isArray(mine)) {
+        throw new TypeError(`expected-track-visibility.json: packStages.${t} must be a list`);
+      }
+      for (const entry of mine as PackStage[]) {
+        const at = composed.indexOf(entry.after);
+        if (at < 0) {
+          throw new TypeError(
+            `expected-track-visibility.json: packStages.${t} puts ${entry.code} after ` +
+              `${entry.after}, which is not on that track`,
+          );
+        }
+        composed.splice(at + 1, 0, entry.code);
+        questions += entry.questions;
+      }
+    }
+    stages[t] = composed;
+    questionsPerTrack[t] = questions;
   }
   return { stages, questionsPerTrack };
 }

@@ -9,16 +9,23 @@ import { expect, test } from '../helpers/test.js';
 // 3b. THE ADMIN (DEPARTMENT) JOURNEY.
 //
 // The Admin track is the short one: four Level 1 stages (s1 s2 s3 s6) and then
-// the two Admin academy modules (dA1 dA2). This walks it to the end and proves
-// the two things only a department track can prove:
+// the Admin academy modules. This walks it to the end and proves the two things
+// only a department track can prove:
 //
 //   * finishing the LEVEL raises the completion banner and issues a
 //     certificate that downloads as a real PDF and verifies on the public page;
-//   * finishing the DEPARTMENT issues a second, different certificate.
+//   * finishing the DEPARTMENT issues a second, different certificate — and
+//     only once the LAST module is passed, not the first.
+//
+// Admin carries three modules, not two: the content pack of 29 Sep put dA3
+// ("How a Claim Qualifies — Irresponsible Lending", badge A2) between dA1 and
+// dA2. The order comes from ops/fixtures/expected-track-visibility.json, which
+// is where the journey gets its stage list rather than naming stages itself, so
+// the walk follows whatever that oracle says the track is.
 //
 // The last core stage (s6) and the first department module (dA1) are taken in
-// the browser, question by question. s1–s3 and the twenty-question dA2 go
-// through the same endpoints without the clicking, so the run stays inside a
+// the browser, question by question. s1–s3 and the remaining department modules
+// go through the same endpoints without the clicking, so the run stays inside a
 // couple of minutes.
 
 const TRACK = 'ADMIN';
@@ -41,14 +48,20 @@ test('an Admin trainee: the core, the department modules, the banner, the certif
   await staff.reset(TRACK);
 
   const stages = expectedStages(TRACK);
-  expect(stages).toEqual(['s1', 's2', 's3', 's6', 'dA1', 'dA2']);
+  expect(stages).toEqual(['s1', 's2', 's3', 's6', 'dA1', 'dA3', 'dA2']);
+  // The core, then the department academy. Everything after the core is a
+  // module, and the last of them is what earns the department certificate.
+  const core = stages.slice(0, 4);
+  const modules = stages.slice(4);
+  expect(core).toEqual(['s1', 's2', 's3', 's6']);
+  expect(modules.length).toBeGreaterThanOrEqual(2);
 
   // --- nothing is earned yet ---------------------------------------------
   await page.goto('/certificates');
   await expect(page.getByText(/don.t have any certificates yet/)).toBeVisible();
 
   // --- the core, up to the last stage ------------------------------------
-  await fastForwardStages(page, ['s1', 's2', 's3']);
+  await fastForwardStages(page, core.slice(0, -1));
 
   // --- the last core stage, in the browser -------------------------------
   const s6 = await getQuiz(page, 's6');
@@ -130,17 +143,33 @@ test('an Admin trainee: the core, the department modules, the banner, the certif
   }
 
   // --- the department modules --------------------------------------------
-  await fastForwardLessonsOnly(page, 'dA1');
-  const dA1 = await getQuiz(page, 'dA1');
-  expect(dA1.status).toBe(200);
-  await page.goto('/stage/dA1/quiz');
-  await chooseAnswers(page, dA1.body, 'correct');
-  expect((await submitAnswers(page, 'dA1')).passed).toBe(true);
+  // The first one in the browser, question by question.
+  const firstModule = modules[0]!;
+  await fastForwardLessonsOnly(page, firstModule);
+  const firstQuiz = await getQuiz(page, firstModule);
+  expect(firstQuiz.status).toBe(200);
+  await page.goto(`/stage/${firstModule}/quiz`);
+  await chooseAnswers(page, firstQuiz.body, 'correct');
+  expect((await submitAnswers(page, firstModule)).passed).toBe(true);
 
-  // Passing the first module must NOT finish the academy on its own.
-  expect((await certificatesOf(staff.account.traineeId)).map((c) => c.kind)).toEqual(['LEVEL']);
+  // Only the LAST module finishes the academy. With three of them that is
+  // worth walking rather than asserting once: dA3 sits between dA1 and dA2, so
+  // passing dA1 and then dA3 must still leave the department certificate
+  // unissued, and a completion rule that counted modules instead of checking
+  // them all off would be caught here.
+  const noDeptCertificateYet = async (after: string): Promise<void> => {
+    expect(
+      (await certificatesOf(staff.account.traineeId)).map((c) => c.kind),
+      `the department certificate must not exist yet after ${after}`,
+    ).toEqual(['LEVEL']);
+  };
+  await noDeptCertificateYet(firstModule);
+  for (const code of modules.slice(1, -1)) {
+    await fastForwardStages(page, [code]);
+    await noDeptCertificateYet(code);
+  }
 
-  await fastForwardStages(page, ['dA2']);
+  await fastForwardStages(page, [modules[modules.length - 1]!]);
 
   const after = await certificatesOf(staff.account.traineeId);
   expect(after.map((c) => c.kind).sort()).toEqual(['DEPT', 'LEVEL']);

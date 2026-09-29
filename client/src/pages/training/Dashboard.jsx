@@ -2,6 +2,7 @@ import { useTrack } from '../../api/training.js';
 import { useMyCertificates } from '../../api/certs.js';
 import { useAuth } from '../../auth/AuthProvider.jsx';
 import WaitingForTrack from '../WaitingForTrack.jsx';
+import AcademyGrownNotice from '../../components/training/AcademyGrownNotice.jsx';
 import AccomplishmentBanner from '../../components/training/AccomplishmentBanner.jsx';
 import DeptSection from '../../components/training/DeptSection.jsx';
 import LevelSection from '../../components/training/LevelSection.jsx';
@@ -33,6 +34,45 @@ function byLevel(stages) {
     else groups.push({ level, stages: [stage] });
   }
   return groups;
+}
+
+/**
+ * The sections that have GROWN since this trainee finished them.
+ *
+ * The server decides that (`grownSince` on /api/track's level and department
+ * headings, from what the completion recorded it covered). All this does is
+ * pair the answer with the cards already on screen, so the notice can say how
+ * many stages are still outstanding — which is normally the new ones, and is
+ * zero in the one case where the new stage went live before the academy began
+ * recording what a completion covered.
+ */
+function grownSections(levelGroups, levelHeadings, deptStages, deptHeading) {
+  const out = [];
+  for (const group of levelGroups) {
+    const heading = levelHeadings.get(group.level);
+    if (!heading?.grownSince) continue;
+    out.push({
+      key: `level-${group.level}`,
+      name: heading.name ? `Level ${group.level} — ${heading.name}` : `Level ${group.level}`,
+      noun: 'stage',
+      completedAt: heading.completedAt,
+      completedCount: heading.completedCount,
+      currentCount: heading.currentCount,
+      outstanding: group.stages.filter((s) => s.state !== 'done').length,
+    });
+  }
+  if (deptHeading?.grownSince && deptStages.length > 0) {
+    out.push({
+      key: `dept-${deptHeading.code}`,
+      name: deptHeading.name ?? 'Your Department Training',
+      noun: 'module',
+      completedAt: deptHeading.completedAt,
+      completedCount: deptHeading.completedCount,
+      currentCount: deptHeading.currentCount,
+      outstanding: deptStages.filter((s) => s.state !== 'done').length,
+    });
+  }
+  return out;
 }
 
 function Panel({ title, children }) {
@@ -85,6 +125,7 @@ export default function Dashboard() {
   const levels = byLevel(levelStages);
   const levelHeadings = new Map((track.data.levels ?? []).map((l) => [l.level, l]));
   const deptHeading = (track.data.depts ?? [])[0] ?? null;
+  const grown = grownSections(levels, levelHeadings, deptStages, deptHeading);
 
   // The one stage the pulse belongs to: the first one still open in track
   // order. Passed stages are 'done', so this is never a stage already behind
@@ -98,6 +139,7 @@ export default function Dashboard() {
   return (
     <TrainingLayout>
       <AccomplishmentBanner certificates={certificates.data?.certificates ?? []} />
+      <AcademyGrownNotice items={grown} />
       <section
         style={heroGradient}
         className="relative mb-6 flex flex-col gap-7 overflow-hidden rounded-card px-6 py-8 text-white md:flex-row md:items-center md:justify-between lg:px-[38px] lg:py-[34px]"

@@ -37,5 +37,5 @@ export {
   rendererIsRunning,
 } from './render.js';
 export type { CertificateDocument } from './render.js';
-export { findByPublicId, listForTrainee, trackLabel } from './repo.js';
-export type { CertificateRow } from './repo.js';
+export { findByPublicId, listForTrainee, loadCompletionScope, trackLabel } from './repo.js';
+export type { CertificateRow, CertificateTarget } from './repo.js';

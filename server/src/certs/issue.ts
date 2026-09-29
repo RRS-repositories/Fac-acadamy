@@ -10,6 +10,7 @@ import type { CertificateDocument } from './render.js';
 import {
   findForTarget,
   insertCertificate,
+  loadCompletionScope,
   loadHolder,
   recordRenderedFile,
   setCompletionCertificateRef,
@@ -32,11 +33,21 @@ import type { CertificateRow } from './repo.js';
 //
 // Idempotent, twice over:
 //   * the insert is ON CONFLICT DO NOTHING against the partial unique indexes
-//     from migration 0002 (one certificate per trainee per level, per
-//     department, per track), so issuing twice produces one certificate;
+//     (one certificate per trainee per level, per department and per scope
+//     since 0013; per track unchanged), so issuing twice produces one
+//     certificate;
 //   * a certificate whose PDF is missing (a failed render, a restore that
 //     missed MEDIA_ROOT) is re-rendered on the next issue or download, and the
 //     row, the public id and the date all stay as they were.
+//
+// SCOPE (migration 0013). An academy can grow: Admin went from two modules to
+// three. Somebody who finishes the bigger academy earns a NEW, current
+// certificate, and the one they already hold stays valid. What makes those two
+// different certificates rather than a conflict is `scope_size` — how much the
+// completion behind the certificate covered. It is READ FROM THE COMPLETION
+// ROW, never counted here: this module has never decided what is complete, and
+// it does not start now. A certificate job re-driven by hand a year later is
+// therefore still safe, because it asks the same row and gets the same answer.
 
 /** Where certificate PDFs live inside the media store (D15: not S3). */
 export const CERT_KEY_PREFIX = 'academy/certs';
@@ -158,12 +169,18 @@ export function createCertificateIssuer(deps: CertificateIssuerDeps): Certificat
     const holder = await loadHolder(deps.db, target.traineeId);
     if (holder === null) return null; // the trainee row went while we worked
 
-    const existing = await findForTarget(deps.db, {
+    // How much the completion covers. Null when there is no completion row, or
+    // when its scope predates 0013 and could not be inferred; that is a valid
+    // key of its own and matches the certificates already in the wild.
+    const scopeSize = await loadCompletionScope(deps.db, {
       traineeId: target.traineeId,
       kind: target.kind,
       levelId,
       dept,
     });
+    const lookup = { traineeId: target.traineeId, kind: target.kind, levelId, dept, scopeSize };
+
+    const existing = await findForTarget(deps.db, lookup);
 
     let certificate = existing;
     let newlyIssued = false;
@@ -179,15 +196,11 @@ export function createCertificateIssuer(deps: CertificateIssuerDeps): Certificat
         // Frozen here: a later rename never rewrites an issued certificate.
         holderName: holder.fullName,
         issuedBy: target.issuedBy ?? actor.system,
+        scopeSize,
       });
       // Nothing inserted means a parallel request won the unique index; read
       // its row back so both callers describe the same certificate.
-      certificate = await findForTarget(deps.db, {
-        traineeId: target.traineeId,
-        kind: target.kind,
-        levelId,
-        dept,
-      });
+      certificate = await findForTarget(deps.db, lookup);
       if (certificate === null) return null;
       newlyIssued = inserted !== null;
     }
@@ -205,6 +218,9 @@ export function createCertificateIssuer(deps: CertificateIssuerDeps): Certificat
           level: certificate.levelId,
           dept: certificate.dept,
           track: certificate.track,
+          // How much it covers, so the audit trail distinguishes the
+          // certificate for the two-module academy from the one for three.
+          scope: certificate.scopeSize,
         },
       });
     }

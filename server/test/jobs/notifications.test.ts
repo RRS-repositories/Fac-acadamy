@@ -182,6 +182,42 @@ describe.skipIf(!TEST_DB)('notification rules', () => {
     ).toBe(true);
   });
 
+  it('says a department academy is finished without claiming how many modules it had', async () => {
+    const notifier = spyNotifier();
+    const rules = rulesWith(notifier);
+
+    expect(await rules.onDeptComplete({ traineeId, dept: 'ADMIN', track: 'ADMIN' })).toBe(true);
+    // The retry, the double submit, the restarted worker: all the same job.
+    expect(await rules.onDeptComplete({ traineeId, dept: 'ADMIN', track: 'ADMIN' })).toBe(false);
+
+    expect(notifier.sent).toHaveLength(1);
+    const message = notifier.sent[0]!;
+    expect(message.kind).toBe(NOTIFICATION_KINDS.deptComplete);
+    // departments.label, not the track code.
+    expect(message.subject).toBe(`Dana Notify-${tag} has finished the Admin academy`);
+    expect(message.body).toBe(
+      `Dana Notify-${tag} has passed every module of the Admin department academy.` +
+        '\n\nFAC Academy',
+    );
+    // This sentence is read by a manager about a real person, so it must not
+    // assert a count it does not have. The prototype gave every department two
+    // modules and the copy used to say "both"; Admin has had three since the
+    // content pack of 29 Sep, and any department can gain another.
+    expect(message.body, 'no module count in the wording').not.toMatch(
+      /\bboth\b|\b(two|three|four)\b|\b\d+\s+modules\b/i,
+    );
+    expect(message.refs).toEqual({ traineeId, ref: 'dept-ADMIN', track: 'ADMIN' });
+    expect(message.to.map((r) => r.email)).toContain(`morgan.manager.${tag}@example.invalid`);
+
+    expect(
+      await wasNotified(pool, {
+        kind: NOTIFICATION_KINDS.deptComplete,
+        traineeId,
+        ref: 'dept-ADMIN',
+      }),
+    ).toBe(true);
+  });
+
   it('says nothing until the third fail, then says it once', async () => {
     const notifier = spyNotifier();
     const rules = rulesWith(notifier);

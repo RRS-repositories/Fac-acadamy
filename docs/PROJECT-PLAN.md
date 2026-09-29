@@ -39,14 +39,18 @@ A staff training portal on its own subdomain, **`academy.fastactionclaims.com`**
 | Full Programme | 16 | 124 | s1 s2 s3 s4 cscalls s5 s6calls s6 l2s1 l2s2 l3s1 l3s2 l4s1 l4s2 l5s1 l5s2 |
 | Customer Service | 14 | 112 | s1 s2 s3 s4 cscalls s6 l2s1 l2s2 l3s1 l3s2 l4s1 l4s2 l5s1 l5s2 |
 | Sales | 14 | 106 | s1 s2 s3 s5 s6calls s6 l2s1 l2s2 l3s1 l3s2 l4s1 l4s2 l5s1 l5s2 |
-| Admin | 6 | 53 | s1 s2 s3 s6 dA1 dA2 |
+| Admin | 6 **(+1)** | 53 **(+10)** | s1 s2 s3 s6 dA1 dA2 **· plus `dA3`, between `dA1` and `dA2`** |
 | Financial Ombudsman | 6 | 44 | s1 s2 s3 s6 dF1 dF2 |
 | Management | 6 | 40 | s1 s2 s3 s6 dM1 dM2 |
 | Payments | 6 | 40 | s1 s2 s3 s6 dP1 dP2 |
 | IT | 6 | 40 | s1 s2 s3 s6 dIT1 dIT2 |
 | Debt Collections | 6 | 46 | s1 s2 s3 s6 dD1 dD2 |
 
-This table is the baseline fixture for the Section 02, 04 and 10 tests.
+This table is the prototype baseline, and the baseline fixture for the Section 02, 04 and 10 tests: `ops/fixtures/expected-track-visibility.json`, typed by hand from these rows.
+
+**Admin also has one module that is not in the prototype.** `dA3` — "How a Claim Qualifies — Irresponsible Lending", badge **A2**, six lessons, ten questions, pass mark 80 — comes from the content pack of 29 Sep, not from `FAC-Academy-Portal-v2.5.html`, and is seeded into `academy_dev` only. Admin therefore reads **A1 `dA1` → A2 `dA3` → A3 `dA2`**: **seven stages and 63 questions**. The stage code is an identity, not an order — `stage_completions`, `quiz_attempts` and `lesson_progress` point at it — so `dA3` keeps its code while its badge and its place in the sequence live in `display_num` and `position`. That is why the code says 3 and the badge says 2, and it is not a mistake to fix.
+
+The fixture keeps the two sources apart: its nine track arrays stay **prototype-only**, because `ops/seed/seed-content.ts` and `ops/seed/verify-seed.ts` compare the prototype's own rows against them and a foreign stage in one of those arrays would fail and roll back every prototype seed. Pack stages are declared separately under `packStages`, each naming the stage it follows; `e2e/helpers/expected.ts` composes the two into the list a browser actually sees.
 
 ---
 

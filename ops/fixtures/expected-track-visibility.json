@@ -1,5 +1,10 @@
 {
   "_source": "Typed by hand from docs/PROJECT-PLAN.md section 1 (Stages each track sees). Independent oracle: never generate this file from the prototype.",
+  "_scope": "The nine track lists, counts and questionsPerTrack below describe PROTOTYPE-OWNED CONTENT ONLY, and must stay that way. ops/seed/seed-content.ts and ops/seed/verify-seed.ts read a track's stages filtered to the prototype's own codes and compare that list against the array here; a stage from any other source added to one of these arrays would make every prototype seed report a MISMATCH and roll itself back. Content a pack adds goes in packStages instead.",
+  "_packStages": "Stages that a content pack adds to a track, also typed by hand — from the pack's own source document, never read back from a database. 'after' is the stage the new one follows in unlock order; composing a track's real list means inserting each entry after its anchor. 'badge' is what the card shows (display_num); it is deliberately not the code, because the code is the identity that stage_completions, quiz_attempts and lesson_progress point at and so never moves when the module does.",
+  "packStages": {
+    "ADMIN": [{ "code": "dA3", "after": "dA1", "badge": "A2", "questions": 10 }]
+  },
   "FULL": [
     "s1",
     "s2",
