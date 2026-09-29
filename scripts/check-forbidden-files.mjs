@@ -18,6 +18,8 @@ const EXPORT_EXT = new Set(['.xlsx', '.xls', '.csv', '.dump']);
 // the server, stored under MEDIA_ROOT and streamed by the API — one must never
 // be committed, whether it came out of a test run or a manual check.
 const GENERATED_EXT = new Set(['.pdf']);
+// A content pack (ops/seed/content-pack.ts) or anything built beside one.
+const PACK_NAME = /\.pack\.json$|^build-pack\./i;
 const PUBLIC_ALLOWED_EXT = new Set([
   // images
   '.png',
@@ -68,6 +70,18 @@ function problemsFor(root, file) {
     problems.push('looks like the prototype: it embeds real client recordings and staff details');
   } else if (ext === '.html' && size !== null && size > MAX_HTML_BYTES) {
     problems.push(`HTML file over 1 MB (${(size / MB).toFixed(1)} MB): possibly the prototype`);
+  }
+  // A content pack is the prototype's counterpart: lesson text, the department's
+  // own lender thresholds, worked cases from real client files, and every
+  // correct answer in plain text. It is read through CONTENT_PACK_PATH from
+  // outside the repo (ops/lib/content-pack-path.ts refuses a path inside it),
+  // and this is the same refusal from the git side. Name-based, so it catches
+  // the pack and its build script rather than every .json in the repo.
+  if (PACK_NAME.test(base) || file.split('/').includes('content-pack')) {
+    problems.push(
+      'looks like a content pack: packs hold lesson text and correct answers, and ' +
+        'live outside the repo behind CONTENT_PACK_PATH',
+    );
   }
   if ((lowerBase === '.env' || lowerBase.startsWith('.env.')) && lowerBase !== '.env.example') {
     problems.push('.env file: secrets live only in an untracked .env (commit .env.example only)');

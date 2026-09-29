@@ -261,7 +261,10 @@ fac-academy/
 │       └── lessonHtml.ts        the allow-list a lesson body is sanitised against
 │
 ├── ops/                         runs on a developer machine or the server, never in the browser
-│   ├── seed/                    seed-content.ts reads $PROTOTYPE_PATH (outside the repo), idempotent
+│   ├── seed/                    seed-content.ts reads $PROTOTYPE_PATH (outside the repo), idempotent,
+│   │                            and writes ONLY rows the prototype owns: a recording slot that
+│   │                            already holds a file is left to the media pipeline.
+│   │                            seed-pack-content.ts seeds non-prototype content from $CONTENT_PACK_PATH
 │   ├── media/                   ingest-media.ts / extract-media.ts → MEDIA_ROOT, never into the repo
 │   ├── admin/                   audited IT commands: reset-mfa, set-track, set-role-override,
 │   │                            authorise-stage1 (the STAGE1_AUTH_REQUIRED gate)

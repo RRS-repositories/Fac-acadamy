@@ -7,6 +7,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "seed": "tsx seed/seed-content.ts",
+    "seed:pack": "tsx seed/seed-pack-content.ts",
     "admin:reset-mfa": "tsx admin/reset-mfa.ts",
     "admin:set-track": "tsx admin/set-track.ts",
     "admin:set-role": "tsx admin/set-role-override.ts",

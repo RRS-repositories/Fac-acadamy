@@ -2,7 +2,7 @@
 
 Plain SQL files, applied in name order by `server/src/db/migrate.ts`.
 
-## The eleven files, in the order they run
+## The files, in the order they run
 
 | # | File | What it does |
 |---|---|---|
@@ -18,6 +18,7 @@ Plain SQL files, applied in name order by `server/src/db/migrate.ts`.
 | 0009 | `0009_call_summary.sql` | `call_recordings.summary`, `summary_model` and `summary_at`: the ONE saved AI summary of what was said on a recording, made from its transcript on the first press of "Summarise" and served to everybody afterwards. Adds no table, so it adds no grant; it checks that `academy_app` really has the UPDATE on `call_recordings` that it now needs for the first time. |
 | 0010 | `0010_transcript_segments.sql` | `call_recordings.transcript_segments` (JSONB), `transcript_engine` and `transcript_at`: the timed lines of a transcript, so the panel under the player can highlight the line being spoken. One column rather than a table of segments — nothing joins to a segment and the whole list is written and replaced as one unit. Adds no table, so it adds no grant; it checks that `academy_app` can read AND update `call_recordings`, which the worker's transcription handler now needs. |
 | 0011 | `0011_transcript_speaker.sql` | One `COMMENT`: `transcript_segments` elements may now carry an optional `speaker` (`A` = the recording's left channel, `B` = the right, absent when nobody could tell), worked out from which channel is louder rather than by any model. 0010 is not edited to say so — the runner records each file's sha256 and refuses to go on when one changes. Adds no column, no constraint, no index and no grant. |
+| 0012 | `0012_content_source.sql` | `stages.content_source`, `lessons.content_source` and `questions.content_source`: which body of content a row belongs to (`PROTOTYPE`, `PACK`, `GENERATED`), now that ops/seed/seed-pack-content.ts writes into the same tables as the prototype seed. Adds no table, so it adds no grant; it checks the ones 0002 gave instead. |
 
 `s3_key` still appears in 0001 and 0002 because an applied migration is never
 edited; 0005 and 0007 fix it forward.
@@ -42,7 +43,7 @@ already exist:
    `academy_app` may do, and `citext` is not installed in the CRM's database
    today. It needs a superuser, or a role with CREATE on the database and rights
    to install the extension. In production that is Brad's own admin login.
-3. **0001–0011 run as an owner/admin login too**, not as `academy_app`: they
+3. **0001 onwards run as an owner/admin login too**, not as `academy_app`: they
    create and alter tables and grant rights. Set `MIGRATE_DB_USER` and
    `MIGRATE_DB_PASSWORD`; they override `DB_USER` / `DB_PASSWORD` for the runner
    only. Everything else comes from `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_SSL`.
@@ -52,7 +53,7 @@ already exist:
 In short, on a fresh database:
 
 ```
-create the academy_app login  ->  0000 (elevated)  ->  0001 … 0011 (owner/admin)
+create the academy_app login  ->  0000 (elevated)  ->  0001 … (owner/admin)
 ```
 
 ## Rules
