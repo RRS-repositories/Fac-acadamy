@@ -1,8 +1,6 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MANAGER, QR_DATA_URL, STAFF, callsTo, mockFetch, renderApp } from './helpers.jsx';
-
-const ENROL_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+import { MANAGER, STAFF, callsTo, mockFetch, renderApp } from './helpers.jsx';
 
 // After sign-in the trainee lands on the dashboard, which reads /api/track
 // (S05). One invented stage is enough for these sign-in checks.
@@ -66,11 +64,6 @@ function signIn(email = 'trainee.a@example.com', password = 'any-password') {
   fireEvent.change(screen.getByLabelText('Work email'), { target: { value: email } });
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } });
   fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-}
-
-async function enterCode(button, code = '123456') {
-  fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: code } });
-  fireEvent.click(screen.getByRole('button', { name: button }));
 }
 
 afterEach(() => {
@@ -157,17 +150,17 @@ describe('Login', () => {
     expect(callsTo(fetchMock, 'POST', '/api/auth/login')).toHaveLength(0);
   });
 
-  it('returning user: password, then code, then lands on the home page', async () => {
+  it('signs in in one step: email + password, then straight to the home page', async () => {
     const fetchMock = mockFetch({
       ...TRACK,
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: STAFF }],
+      'POST /api/auth/login': [200, { me: STAFF }],
     });
     await openLogin();
     signIn();
     expect(
-      await screen.findByRole('heading', { name: 'Enter your authenticator code' }),
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
     ).toBeInTheDocument();
+    expect(screen.getByText('Customer Service')).toBeInTheDocument();
 
     const [[, loginInit]] = callsTo(fetchMock, 'POST', '/api/auth/login');
     expect(loginInit.credentials).toBe('same-origin');
@@ -176,43 +169,51 @@ describe('Login', () => {
       password: 'any-password',
     });
 
-    fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '12a3456' } });
-    expect(screen.getByLabelText('6-digit code')).toHaveValue('123456');
-    fireEvent.click(screen.getByRole('button', { name: 'Verify and sign in' }));
+    // Sign-in is one call. Nothing else under /api/auth is asked for (the
+    // keep-alive heartbeat is on a timer, not part of signing in).
+    const authCalls = fetchMock.mock.calls.filter(
+      ([path]) => String(path).startsWith('/api/auth/') && path !== '/api/auth/heartbeat',
+    );
+    expect(authCalls.map(([path]) => String(path))).toEqual(['/api/auth/login']);
+  });
 
-    expect(
-      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Customer Service')).toBeInTheDocument();
-    const [[, mfaInit]] = callsTo(fetchMock, 'POST', '/api/auth/mfa');
-    expect(mfaInit.credentials).toBe('same-origin');
-    expect(JSON.parse(mfaInit.body)).toEqual({ code: '123456' });
+  it('never asks for an authenticator app, a QR code or a code', async () => {
+    mockFetch({ ...TRACK, 'POST /api/auth/login': [200, { me: STAFF }] });
+    await openLogin();
+    const noSecondStep = () => {
+      expect(screen.queryByText(/authenticator/i)).toBeNull();
+      expect(screen.queryByText(/qr code/i)).toBeNull();
+      expect(screen.queryByText(/6-digit/i)).toBeNull();
+      expect(screen.queryByLabelText(/code/i)).toBeNull();
+      expect(screen.queryByRole('img', { name: /qr/i })).toBeNull();
+    };
+    noSecondStep();
+    fireEvent.click(tab('Manager'));
+    noSecondStep();
+    fireEvent.click(tab(/staff member/i));
+    signIn();
+    await screen.findByRole('heading', { name: 'Welcome back, Trainee' });
+    noSecondStep();
   });
 
   it('after sign-in goes to the page in ?next=', async () => {
     mockFetch({
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: MANAGER }],
+      'POST /api/auth/login': [200, { me: MANAGER }],
       ...MANAGER_AREA,
     });
     await openLogin('/login?next=%2Fmanager');
     signIn('manager.b@example.com');
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    await enterCode('Verify and sign in');
     expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
   });
 
   it('manager tab + a manager account lands on the roster', async () => {
     mockFetch({
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: MANAGER }],
+      'POST /api/auth/login': [200, { me: MANAGER }],
       ...MANAGER_AREA,
     });
     await openLogin();
     fireEvent.click(tab('Manager'));
     signIn('manager.b@example.com');
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    await enterCode('Verify and sign in');
     expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
   });
 
@@ -222,13 +223,10 @@ describe('Login', () => {
   it('staff tab + a manager account STILL lands on the roster', async () => {
     mockFetch({
       ...TRACK,
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: MANAGER }],
+      'POST /api/auth/login': [200, { me: MANAGER }],
     });
     await openLogin();
     signIn('manager.b@example.com');
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    await enterCode('Verify and sign in');
     expect(await screen.findByRole('heading', { name: /trainee roster/i })).toBeInTheDocument();
     // And no calm line: this account does have management access.
     expect(screen.queryByText(/doesn't have management access/i)).not.toBeInTheDocument();
@@ -237,13 +235,14 @@ describe('Login', () => {
   it('manager tab + a staff account lands on training with one calm line and no manager UI', async () => {
     const fetchMock = mockFetch({
       ...TRACK,
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: STAFF }],
+      'POST /api/auth/login': [200, { me: STAFF }],
     });
     await openLogin();
     fireEvent.click(tab('Manager'));
     signIn();
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
+    expect(
+      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
+    ).toBeInTheDocument();
 
     // The tab changes nothing about the request itself.
     const [[, loginInit]] = callsTo(fetchMock, 'POST', '/api/auth/login');
@@ -252,10 +251,6 @@ describe('Login', () => {
       password: 'any-password',
     });
 
-    await enterCode('Verify and sign in');
-    expect(
-      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
-    ).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(
       "You're signed in. This account doesn't have management access, so here is your training.",
     );
@@ -271,15 +266,12 @@ describe('Login', () => {
 
   it('an explicit ?next= beats the manager tab', async () => {
     mockFetch({
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: MANAGER }],
+      'POST /api/auth/login': [200, { me: MANAGER }],
       ...MANAGER_AREA,
     });
     await openLogin('/login?next=%2Fstatus-guide');
     fireEvent.click(tab('Manager'));
     signIn('manager.b@example.com');
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    await enterCode('Verify and sign in');
     expect(await screen.findByRole('heading', { name: /status guide/i })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Trainee roster' })).not.toBeInTheDocument();
   });
@@ -287,51 +279,10 @@ describe('Login', () => {
   it('ignores a ?next= that points off-site', async () => {
     mockFetch({
       ...TRACK,
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: STAFF }],
+      'POST /api/auth/login': [200, { me: STAFF }],
     });
     await openLogin('/login?next=%2F%2Fevil.example.com');
     signIn();
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    await enterCode('Verify and sign in');
-    expect(
-      await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
-    ).toBeInTheDocument();
-  });
-
-  it('first sign-in shows the real QR image, the grouped key and the 3 steps', async () => {
-    mockFetch({
-      ...TRACK,
-      'POST /api/auth/login': [
-        200,
-        {
-          next: 'enrol',
-          enrol: {
-            qrDataUrl: QR_DATA_URL,
-            secret: ENROL_SECRET,
-            issuer: 'FAC Academy',
-            account: 'trainee.a@example.com',
-          },
-        },
-      ],
-      'POST /api/auth/mfa': [200, { me: STAFF }],
-    });
-    await openLogin();
-    signIn();
-    expect(
-      await screen.findByRole('heading', { name: 'Set up your authenticator' }),
-    ).toBeInTheDocument();
-
-    const qr = screen.getByRole('img', { name: /qr code/i });
-    expect(qr.tagName).toBe('IMG');
-    expect(qr).toHaveAttribute('src', QR_DATA_URL);
-    expect(screen.getByText(/can't scan it/i)).toBeInTheDocument();
-    expect(screen.getByText('JBSW Y3DP EHPK 3PXP JBSW Y3DP EHPK 3PXP')).toBeInTheDocument();
-    expect(screen.getByText(/install an authenticator app/i)).toBeInTheDocument();
-    expect(screen.getByText('Scan this QR code with the app.')).toBeInTheDocument();
-    expect(screen.getByText('Enter the 6-digit code the app shows.')).toBeInTheDocument();
-
-    await enterCode('Turn on and sign in');
     expect(
       await screen.findByRole('heading', { name: 'Welcome back, Trainee' }),
     ).toBeInTheDocument();
@@ -357,40 +308,6 @@ describe('Login', () => {
       expect(screen.getByLabelText('Work email')).toHaveValue('trainee.a@example.com');
     },
   );
-
-  it('a wrong code shows its message and stays on the code step', async () => {
-    mockFetch({
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [401, { error: 'invalid_code' }],
-    });
-    await openLogin();
-    signIn();
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    await enterCode('Verify and sign in', '000000');
-    expect(await screen.findByRole('alert')).toHaveTextContent("That code didn't work");
-    expect(
-      screen.getByRole('heading', { name: 'Enter your authenticator code' }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText('6-digit code')).toHaveValue('');
-  });
-
-  it('mfa_required sends the user back to the first step', async () => {
-    mockFetch({
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [401, { error: 'mfa_required' }],
-    });
-    await openLogin();
-    signIn();
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    await enterCode('Verify and sign in');
-    expect(
-      await screen.findByRole('heading', { name: 'Sign in to start training' }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Your sign-in took too long. Please start again.',
-    );
-    expect(screen.getByLabelText('Password')).toHaveValue('');
-  });
 
   it('redirects to / when already signed in', async () => {
     mockFetch({ ...TRACK, 'GET /api/me': [200, { me: STAFF }] });

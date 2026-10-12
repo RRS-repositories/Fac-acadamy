@@ -178,19 +178,20 @@ describe('per-endpoint statistics', () => {
 describe('the per-trainee cookie jar', () => {
   it('keeps what the server sets and sends it back', () => {
     const jar = new CookieJar();
-    jar.accept({ 'set-cookie': ['academy_mfa=abc; Path=/; HttpOnly; SameSite=Lax'] });
-    expect(jar.has('academy_mfa')).toBe(true);
-    expect(jar.header()).toBe('academy_mfa=abc');
+    // The session cookie the one-step sign-in sets; the load test checks for it.
+    jar.accept({ 'set-cookie': ['academy_sid=abc; Path=/; HttpOnly; SameSite=Lax'] });
+    expect(jar.has('academy_sid')).toBe(true);
+    expect(jar.header()).toBe('academy_sid=abc');
 
-    jar.accept({ 'set-cookie': ['academy_sid=xyz; Path=/; HttpOnly'] });
-    expect(jar.header()).toBe('academy_mfa=abc; academy_sid=xyz');
+    jar.accept({ 'set-cookie': ['other=xyz; Path=/; HttpOnly'] });
+    expect(jar.header()).toBe('academy_sid=abc; other=xyz');
   });
 
   it('forgets a cookie the server clears', () => {
     const jar = new CookieJar();
-    jar.accept({ 'set-cookie': ['academy_mfa=abc; Path=/'] });
-    jar.accept({ 'set-cookie': ['academy_mfa=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT'] });
-    expect(jar.has('academy_mfa')).toBe(false);
+    jar.accept({ 'set-cookie': ['academy_sid=abc; Path=/'] });
+    jar.accept({ 'set-cookie': ['academy_sid=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT'] });
+    expect(jar.has('academy_sid')).toBe(false);
     expect(jar.header()).toBe('');
   });
 

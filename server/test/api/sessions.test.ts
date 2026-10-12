@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createLoginLimiters } from '../../src/modules/auth/limits.js';
 import {
-  MemoryPendingMfaStore,
   MemorySessionStore,
-  PENDING_MFA_TTL_MS,
   SESSION_IDLE_MS,
   isWellFormedId,
   newOpaqueId,
@@ -70,23 +68,6 @@ describe('MemorySessionStore', () => {
     const s = (await store.get(id))!;
     await store.revokeAll(1);
     await store.touch(id, s);
-    expect(await store.get(id)).toBeNull();
-  });
-});
-
-describe('MemoryPendingMfaStore', () => {
-  it('expires after 5 minutes', async () => {
-    const c = clock();
-    const store = new MemoryPendingMfaStore(c.now);
-    const id = await store.create({
-      traineeId: 1,
-      email: 'a@example.com',
-      stage: 'challenge',
-      crmRole: 'Sales',
-    });
-    c.t += PENDING_MFA_TTL_MS - 1;
-    expect(await store.get(id)).not.toBeNull();
-    c.t += 1;
     expect(await store.get(id)).toBeNull();
   });
 });

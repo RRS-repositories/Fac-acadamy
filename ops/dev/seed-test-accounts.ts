@@ -5,8 +5,8 @@
 //   npx tsx ops/dev/seed-test-accounts.ts --expect-db academy_dev [--reset]
 //   DB_NAME=academy_test npx tsx ops/dev/seed-test-accounts.ts --expect-db academy_test
 //
-// These accounts have NO CRM user and NO authenticator, so none of them can
-// sign in: they exist so the API sweeps and the server tests can drive the
+// These accounts have NO CRM user, so none of them can sign in (sign-in is
+// checked against the CRM): they exist so the API sweeps and the server tests can drive the
 // gate directly (by trainee id) without a sign-in. The one exception is the
 // manager account, which carries a reserved local-only crm_user_id purely so
 // an academy.role_overrides row can mark it MANAGER — that table is keyed by
@@ -190,7 +190,7 @@ async function main(): Promise<number> {
     }
 
     console.log(
-      '\nDeveloper accounts (no CRM user, no authenticator: they cannot sign in)\n' +
+      '\nDeveloper accounts (no CRM user: they cannot sign in)\n' +
         table(
           ['email', 'track', 'role', 'trainee id', 'row'],
           result.accounts.map((a) => [

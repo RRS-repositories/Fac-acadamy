@@ -1,16 +1,18 @@
 // S03 CHECKLIST 03, against the real local test database. Runs only when
 // MIGRATION_TEST_DB_NAME is set; otherwise skipped (see auth-nodb.test.ts for
 // the parts that need no database).
+//
+// Sign-in is CRM email + password and nothing else: the authenticator-app
+// (TOTP) step was removed (decision D21), so POST /api/auth/login creates the
+// session itself and POST /api/auth/mfa no longer exists.
 import { createHash } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { LoginResponseSchema, MfaResponseSchema } from '@fac-academy/shared';
+import { LoginResponseSchema } from '@fac-academy/shared';
 import { createApp } from '../../src/app.js';
 import { createLoginLimiters, emailAuditKey } from '../../src/modules/auth/limits.js';
 import {
-  MemoryPendingMfaStore,
   MemorySessionStore,
-  PENDING_MFA_TTL_MS,
   SESSION_IDLE_MS,
   createSessionManager,
 } from '../../src/modules/auth/sessions.js';
@@ -23,7 +25,6 @@ import {
   cookieValue,
   get,
   login,
-  mfa,
   openTestDb,
   post,
   setCookies,
@@ -51,38 +52,36 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
     return signIn(h, account);
   }
 
-  // ---- Checklist 1: CRM credentials + TOTP → session; role in /api/me ------
+  async function sessionRows(traineeId: number): Promise<number> {
+    const { rows } = await db.pool.query<{ n: string }>(
+      'SELECT count(*) AS n FROM academy.sessions WHERE trainee_id = $1',
+      [traineeId],
+    );
+    return Number(rows[0]!.n);
+  }
 
-  describe('checklist 1: valid CRM credentials + TOTP establish a session', () => {
-    it('first sign-in enrols, creates the trainee (track NULL) and /api/me shows STAFF', async () => {
+  // ---- Checklist 1: CRM credentials → session; role in /api/me ---------------
+
+  describe('checklist 1: valid CRM credentials establish a session', () => {
+    it('login returns { me } and sets academy_sid; new trainee (track NULL) is STAFF', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount({ role: 'Sales' }));
 
       const res = await login(h, account.email, account.password);
       expect(res.status).toBe(200);
-      const body = LoginResponseSchema.parse(res.body);
-      expect(body.next).toBe('enrol');
-      if (body.next !== 'enrol') throw new Error('unreachable');
-      expect(body.enrol.account).toBe(account.email);
-      expect(body.enrol.issuer).toBe('FAC Academy');
-      expect(body.enrol.qrDataUrl.startsWith('data:image/png;base64,')).toBe(true);
+      expect(res.headers['cache-control']).toBe('no-store');
+      // Exactly { me }: nothing about an authenticator, no "next" step.
+      expect(Object.keys(res.body as object)).toEqual(['me']);
+      const { me } = LoginResponseSchema.parse(res.body);
+      expect(me).toMatchObject({ email: account.email, role: 'STAFF', track: null });
       // The CRM got the client IP, not the proxy's.
       expect(h.crm.calls.at(-1)?.clientIp).toMatch(/^198\.51\.100\./);
 
-      // No session yet: only the pending cookie.
-      expect(cookiePair(res, 'academy_sid')).toBeNull();
-      const pending = cookiePair(res, 'academy_mfa');
-      expect(pending).not.toBeNull();
-      expect((await get(h, '/api/me', pending!)).status).toBe(401);
-
-      h.clock.nextStep();
-      const done = await mfa(h, pending, h.clock.code(body.enrol.secret));
-      expect(done.status).toBe(200);
-      const { me } = MfaResponseSchema.parse(done.body);
-      expect(me).toMatchObject({ email: account.email, role: 'STAFF', track: null });
-
-      const cookie = cookiePair(done, 'academy_sid')!;
-      const meRes = await get(h, '/api/me', cookie);
+      // The session cookie, and only that one: no pending-step cookie any more.
+      const cookie = cookiePair(res, 'academy_sid');
+      expect(cookie).not.toBeNull();
+      expect(cookiePair(res, 'academy_mfa')).toBeNull();
+      const meRes = await get(h, '/api/me', cookie!);
       expect(meRes.status).toBe(200);
       expect(meRes.body).toEqual({ me });
 
@@ -97,16 +96,8 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
         status: 'ACTIVE',
       });
 
-      // The TOTP secret is stored encrypted, and the enrolment is complete.
-      const mfaRow = await db.pool.query<{ secret_enc: Buffer; enrolled_at: Date | null }>(
-        'SELECT secret_enc, enrolled_at FROM academy.trainee_mfa WHERE trainee_id = $1',
-        [me.id],
-      );
-      expect(mfaRow.rows[0]!.enrolled_at).not.toBeNull();
-      expect(mfaRow.rows[0]!.secret_enc.toString('latin1')).not.toContain(body.enrol.secret);
-
       // The academy.sessions mirror holds the hash of the id, never the id.
-      const sid = cookieValue(cookie);
+      const sid = cookieValue(cookie!);
       const sessions = await db.pool.query<{ sid_hash: string }>(
         'SELECT sid_hash FROM academy.sessions WHERE trainee_id = $1',
         [me.id],
@@ -116,18 +107,39 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
       ]);
     });
 
-    it('a returning user gets the challenge and signs in with the next code', async () => {
+    it('login writes no academy.trainee_mfa row', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount());
       const first = await signIn(h, account);
+      await signIn(h, account);
+      const { rows } = await db.pool.query<{ n: string }>(
+        'SELECT count(*) AS n FROM academy.trainee_mfa WHERE trainee_id = $1',
+        [first.me.id],
+      );
+      expect(Number(rows[0]!.n)).toBe(0);
+    });
 
-      const res = await login(h, account.email, account.password);
-      expect(res.status).toBe(200);
-      expect(res.body).toEqual({ next: 'challenge' });
-      h.clock.nextStep();
-      const done = await mfa(h, cookiePair(res, 'academy_mfa'), h.clock.code(first.secret));
-      expect(done.status).toBe(200);
-      expect(done.body.me.id).toBe(first.me.id);
+    it('a returning user signs in again with the password alone', async () => {
+      const h = setup();
+      const account = h.crm.add(db.newAccount());
+      const first = await signIn(h, account);
+      const again = await signIn(h, account);
+      expect(again.me.id).toBe(first.me.id);
+      expect(again.cookie).not.toBe(first.cookie);
+      // Both sessions are live: signing in again does not sign the other one out.
+      expect((await get(h, '/api/me', first.cookie)).status).toBe(200);
+      expect((await get(h, '/api/me', again.cookie)).status).toBe(200);
+      expect(await sessionRows(first.me.id)).toBe(2);
+    });
+
+    it('POST /api/auth/mfa → 404 (the authenticator step no longer exists)', async () => {
+      const h = setup();
+      const s = await signIn(h, h.crm.add(db.newAccount()));
+      // Signed in, so the training router's session check lets the request
+      // through to the JSON 404 for an unknown route.
+      const res = await post(h, '/api/auth/mfa', s.cookie, { code: '123456' });
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: 'not_found' });
     });
 
     it("CRM role 'Management' is MANAGER; a role_overrides row wins", async () => {
@@ -170,29 +182,38 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
       expect(linked.rows[0]!.crm_user_id).toBe(String(account.id));
     });
 
-    it('cookies are HttpOnly, SameSite=Lax, Path=/ and host-only (no Domain)', async () => {
+    it('an email linked to a different CRM user → 403 forbidden, audited, no session', async () => {
+      const h = setup();
+      const original = h.crm.add(db.newAccount());
+      const first = await signIn(h, original);
+      // Another CRM user (a different id) now presents the same address.
+      const other = h.crm.add(db.newAccount({ email: original.email }));
+      expect(other.id).not.toBe(original.id);
+
+      const res = await login(h, other.email, other.password);
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'forbidden' });
+      expect(cookiePair(res, 'academy_sid')).toBeNull();
+      const fails = await auditRows(db.pool, { email: original.email, eventType: 'LOGIN_FAIL' });
+      expect(fails.map((r) => r.payload['reason'])).toContain('crm_identity_conflict');
+      // Still only the one session from the original sign-in.
+      expect(await sessionRows(first.me.id)).toBe(1);
+    });
+
+    it('the session cookie is HttpOnly, SameSite=Lax, Path=/, host-only, no Max-Age', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount());
       const res = await login(h, account.email, account.password);
-      h.clock.nextStep();
-      const done = await mfa(
-        h,
-        cookiePair(res, 'academy_mfa'),
-        h.clock.code((res.body as { enrol: { secret: string } }).enrol.secret),
-      );
-      const lines = [...setCookies(res), ...setCookies(done)].filter((l) =>
-        /^academy_(sid|mfa)=[^;]/.test(l),
-      );
-      expect(lines.length).toBeGreaterThanOrEqual(2);
-      for (const line of lines) {
-        expect(line).toMatch(/;\s*HttpOnly/i);
-        expect(line).toMatch(/;\s*SameSite=Lax/i);
-        expect(line).toMatch(/;\s*Path=\//i);
-        expect(line).not.toMatch(/;\s*Domain=/i);
-      }
-      // The pending cookie is short-lived; the session cookie has no Max-Age.
-      expect(lines.find((l) => l.startsWith('academy_mfa='))).toMatch(/Max-Age=300/);
-      expect(lines.find((l) => l.startsWith('academy_sid='))).not.toMatch(/Max-Age/i);
+      expect(res.status).toBe(200);
+      const lines = setCookies(res).filter((l) => /^academy_[a-z]+=[^;]/.test(l));
+      expect(lines).toHaveLength(1);
+      const line = lines[0]!;
+      expect(line.startsWith('academy_sid=')).toBe(true);
+      expect(line).toMatch(/;\s*HttpOnly/i);
+      expect(line).toMatch(/;\s*SameSite=Lax/i);
+      expect(line).toMatch(/;\s*Path=\//i);
+      expect(line).not.toMatch(/;\s*Domain=/i);
+      expect(line).not.toMatch(/Max-Age/i);
     });
 
     it('sets Secure when COOKIE_SECURE is on', async () => {
@@ -206,7 +227,6 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
         auth: {
           db: db.pool,
           sessions: createSessionManager({ db: db.pool, store: new MemorySessionStore() }),
-          pending: new MemoryPendingMfaStore(),
           crm,
           limiters: createLoginLimiters(null),
           mfaKey: TEST_MFA_KEY,
@@ -218,20 +238,20 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
         .post('/api/auth/login')
         .send({ email: account.email, password: account.password });
       expect(res.status).toBe(200);
-      expect(setCookies(res).find((l) => l.startsWith('academy_mfa='))).toMatch(/;\s*Secure/i);
+      expect(setCookies(res).find((l) => l.startsWith('academy_sid='))).toMatch(/;\s*Secure/i);
     });
   });
 
-  // ---- Checklist 2: invalid credentials and invalid TOTP rejected + audited --
+  // ---- Checklist 2: invalid credentials rejected + audited -------------------
 
-  describe('checklist 2: bad password and bad code are rejected and audited', () => {
-    it('wrong password → 401 invalid_credentials + LOGIN_FAIL', async () => {
+  describe('checklist 2: bad credentials are rejected and audited', () => {
+    it('wrong password → 401 invalid_credentials + LOGIN_FAIL; no session', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount());
       const res = await login(h, account.email, 'wrong-password');
       expect(res.status).toBe(401);
       expect(res.body).toEqual({ error: 'invalid_credentials' });
-      expect(cookiePair(res, 'academy_mfa')).toBeNull();
+      expect(cookiePair(res, 'academy_sid')).toBeNull();
       const rows = await auditRows(db.pool, { email: account.email, eventType: 'LOGIN_FAIL' });
       expect(rows).toHaveLength(1);
       expect(rows[0]!.payload).toMatchObject({ reason: 'invalid_credentials' });
@@ -285,63 +305,6 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
       await db.pool.query(`DELETE FROM academy.audit_events WHERE payload->>'emailHash' = $1`, [
         emailAuditKey(typed, TEST_MFA_KEY),
       ]);
-    });
-
-    it('wrong code → 401 invalid_code + MFA_FAIL; no session', async () => {
-      const h = setup();
-      const account = h.crm.add(db.newAccount());
-      const res = await login(h, account.email, account.password);
-      const secret = (res.body as { enrol: { secret: string } }).enrol.secret;
-      h.clock.nextStep();
-      const good = h.clock.code(secret);
-      const bad = good === '000000' ? '111111' : '000000';
-      const wrong = await mfa(h, cookiePair(res, 'academy_mfa'), bad);
-      expect(wrong.status).toBe(401);
-      expect(wrong.body).toEqual({ error: 'invalid_code' });
-      expect(cookiePair(wrong, 'academy_sid')).toBeNull();
-
-      const trainee = await db.pool.query<{ id: string }>(
-        'SELECT id FROM academy.trainees WHERE crm_user_id = $1',
-        [account.id],
-      );
-      const traineeId = Number(trainee.rows[0]!.id);
-      const rows = await auditRows(db.pool, { traineeId, eventType: 'MFA_FAIL' });
-      expect(rows).toHaveLength(1);
-      expect(JSON.stringify(rows[0]!.payload)).not.toContain(bad);
-
-      // The right code still works afterwards (same pending step).
-      const ok = await mfa(h, cookiePair(res, 'academy_mfa'), good);
-      expect(ok.status).toBe(200);
-    });
-
-    it('rejects a replayed code (same TOTP step used twice)', async () => {
-      const h = setup();
-      const account = h.crm.add(db.newAccount());
-      const first = await signIn(h, account);
-      const usedCode = h.clock.code(first.secret); // the step signIn just used
-
-      const res = await login(h, account.email, account.password);
-      const replay = await mfa(h, cookiePair(res, 'academy_mfa'), usedCode);
-      expect(replay.status).toBe(401);
-      expect(replay.body).toEqual({ error: 'invalid_code' });
-    });
-
-    it('the pending step expires after 5 minutes → 401 mfa_required', async () => {
-      const h = setup();
-      const account = h.crm.add(db.newAccount());
-      const res = await login(h, account.email, account.password);
-      const secret = (res.body as { enrol: { secret: string } }).enrol.secret;
-      h.clock.advance(PENDING_MFA_TTL_MS + 1_000);
-      const late = await mfa(h, cookiePair(res, 'academy_mfa'), h.clock.code(secret));
-      expect(late.status).toBe(401);
-      expect(late.body).toEqual({ error: 'mfa_required' });
-    });
-
-    it('no pending cookie → 401 mfa_required', async () => {
-      const h = setup();
-      const res = await mfa(h, null, '123456');
-      expect(res.status).toBe(401);
-      expect(res.body).toEqual({ error: 'mfa_required' });
     });
 
     it('maps CRM outcomes: not approved 403, CRM-locked 423, CRM down 503', async () => {
@@ -469,41 +432,45 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
   // ---- Checklist 5: disabled cannot sign in; re-enable restores -------------
 
   describe('checklist 5: a disabled account cannot sign in; re-enabling restores it', () => {
-    it('403 disabled at sign-in, then works again after enable', async () => {
+    it('403 disabled at sign-in with no session, then works again after enable', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount());
       const first = await signIn(h, account);
       const manager = await signedInManager(h);
       await post(h, `/api/manager/trainees/${first.me.id}/disable`, manager.cookie);
+      const before = await sessionRows(first.me.id);
 
       const blocked = await login(h, account.email, account.password);
       expect(blocked.status).toBe(403);
       expect(blocked.body).toEqual({ error: 'disabled' });
-      expect(cookiePair(blocked, 'academy_mfa')).toBeNull();
+      expect(cookiePair(blocked, 'academy_sid')).toBeNull();
+      expect(await sessionRows(first.me.id)).toBe(before);
       expect(
         await auditRows(db.pool, { traineeId: first.me.id, eventType: 'LOGIN_BLOCKED_DISABLED' }),
+      ).toHaveLength(1);
+      expect(
+        await auditRows(db.pool, { traineeId: first.me.id, eventType: 'LOGIN_SUCCESS' }),
       ).toHaveLength(1);
 
       const enable = await post(h, `/api/manager/trainees/${first.me.id}/enable`, manager.cookie);
       expect(enable.status).toBe(204);
-      const again = await signIn(h, account, first.secret);
+      const again = await signIn(h, account);
       expect(again.me.id).toBe(first.me.id);
       expect((await get(h, '/api/me', again.cookie)).status).toBe(200);
     });
 
-    it('a disable between the password and the code step blocks the session', async () => {
+    it('an account disabled directly in the DB is refused at sign-in with no session', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount());
       const first = await signIn(h, account);
-      const res = await login(h, account.email, account.password);
       await db.pool.query('UPDATE academy.trainees SET is_disabled = TRUE WHERE id = $1', [
         first.me.id,
       ]);
-      h.clock.nextStep();
-      const done = await mfa(h, cookiePair(res, 'academy_mfa'), h.clock.code(first.secret));
-      expect(done.status).toBe(403);
-      expect(done.body).toEqual({ error: 'disabled' });
-      expect(cookiePair(done, 'academy_sid')).toBeNull();
+      const res = await login(h, account.email, account.password);
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({ error: 'disabled' });
+      expect(cookiePair(res, 'academy_sid')).toBeNull();
+      expect(await sessionRows(first.me.id)).toBe(1);
     });
   });
 
@@ -543,34 +510,11 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
       );
     });
 
-    it('wrong codes count toward the same lockout', async () => {
-      const h = setup();
-      const account = h.crm.add(db.newAccount());
-      const first = await signIn(h, account);
-      for (let i = 0; i < 9; i++) await login(h, account.email, 'wrong');
-      const res = await login(h, account.email, account.password);
-      expect(res.status).toBe(200);
-      h.clock.nextStep();
-      const good = h.clock.code(first.secret);
-      const wrong = await mfa(
-        h,
-        cookiePair(res, 'academy_mfa'),
-        good === '000000' ? '111111' : '000000',
-      );
-      expect(wrong.status).toBe(401);
-      // The 10th failure locked the account and ended the pending step.
-      const retry = await mfa(h, cookiePair(res, 'academy_mfa'), good);
-      expect(retry.status).toBe(401);
-      expect(retry.body).toEqual({ error: 'mfa_required' });
-      expect((await login(h, account.email, account.password)).status).toBe(423);
-    });
-
     it('a successful sign-in resets the failure count', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount());
-      const first = await signIn(h, account);
       for (let i = 0; i < 9; i++) await login(h, account.email, 'wrong');
-      await signIn(h, account, first.secret);
+      await signIn(h, account);
       for (let i = 0; i < 9; i++) await login(h, account.email, 'wrong');
       expect((await login(h, account.email, account.password)).status).toBe(200);
     });
@@ -659,17 +603,27 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
 
   // ---- Checklist 8: audit rows for every required event -----------------------
 
-  describe('checklist 8: audit rows exist for login success, login fail, MFA fail, disable, re-enable', () => {
-    it('writes each event with the right actor and no secrets', async () => {
+  describe('checklist 8: audit rows exist for login success, login fail, disable, re-enable', () => {
+    it('LOGIN_SUCCESS is audited with the resolved role, the CRM role, ip and user agent', async () => {
+      const h = setup();
+      const s = await signedInManager(h);
+      const rows = await auditRows(db.pool, { traineeId: s.me.id, eventType: 'LOGIN_SUCCESS' });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.actor).toBe(`trainee:${s.me.id}`);
+      expect(rows[0]!.payload).toEqual({
+        role: 'MANAGER',
+        crmRole: 'Management',
+        ip: expect.stringMatching(/^198\.51\.100\./),
+        userAgent: 'auth-test',
+      });
+    });
+
+    it('writes each event in order, with the right actor and no secrets', async () => {
       const h = setup();
       const account = h.crm.add(db.newAccount());
       await login(h, account.email, 'wrong-password'); // LOGIN_FAIL
-      const res = await login(h, account.email, account.password);
-      const secret = (res.body as { enrol: { secret: string } }).enrol.secret;
-      h.clock.nextStep();
-      const good = h.clock.code(secret);
-      await mfa(h, cookiePair(res, 'academy_mfa'), good === '000000' ? '111111' : '000000'); // MFA_FAIL
-      const done = await mfa(h, cookiePair(res, 'academy_mfa'), good); // MFA_ENROLLED + LOGIN_SUCCESS
+      const done = await login(h, account.email, account.password); // LOGIN_SUCCESS
+      expect(done.status).toBe(200);
       const traineeId = (done.body as { me: { id: number } }).me.id;
       const manager = await signedInManager(h);
       await post(h, `/api/manager/trainees/${traineeId}/disable`, manager.cookie);
@@ -677,24 +631,21 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
 
       const byTrainee = await auditRows(db.pool, { traineeId });
       const failRows = await auditRows(db.pool, { email: account.email, eventType: 'LOGIN_FAIL' });
-      const types = new Set([...byTrainee, ...failRows].map((r) => r.event_type));
-      for (const t of [
+      expect(failRows).toHaveLength(1);
+      // The trainee's own trail, in the order it happened. No MFA_* event is
+      // written any more: there is no authenticator step to enrol in or fail.
+      expect(byTrainee.map((r) => r.event_type)).toEqual([
         'LOGIN_SUCCESS',
-        'LOGIN_FAIL',
-        'MFA_FAIL',
-        'MFA_ENROLLED',
         'ACCOUNT_DISABLED',
         'ACCOUNT_ENABLED',
-      ]) {
-        expect(types, t).toContain(t);
-      }
+      ]);
       const disabled = byTrainee.find((r) => r.event_type === 'ACCOUNT_DISABLED')!;
       expect(disabled.actor).toBe(`manager:${manager.me.id}`);
-      expect(byTrainee.find((r) => r.event_type === 'LOGIN_SUCCESS')!.actor).toBe(
-        `trainee:${traineeId}`,
-      );
-      expect(byTrainee.find((r) => r.event_type === 'LOGIN_SUCCESS')!.payload).toMatchObject({
+      const success = byTrainee.find((r) => r.event_type === 'LOGIN_SUCCESS')!;
+      expect(success.actor).toBe(`trainee:${traineeId}`);
+      expect(success.payload).toMatchObject({
         role: 'STAFF',
+        crmRole: 'Sales',
         ip: expect.stringMatching(/^198\.51\.100\./),
         userAgent: expect.any(String),
       });
@@ -702,8 +653,7 @@ describe.skipIf(!TEST_DB)('S03 sign-in, sessions and account controls (test DB)'
       const everything = JSON.stringify([...byTrainee, ...failRows]);
       expect(everything).not.toContain('wrong-password');
       expect(everything).not.toContain(account.password);
-      expect(everything).not.toContain(secret);
-      expect(everything).not.toContain(good);
+      expect(everything).not.toContain(cookieValue(cookiePair(done, 'academy_sid')!));
     });
   });
 });

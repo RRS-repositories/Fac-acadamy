@@ -1,7 +1,7 @@
 # FAC Academy
 
 Staff training portal for Fast Action Claims, served at `academy.fastactionclaims.com`.
-Staff sign in with their CRM credentials plus an authenticator app, follow one of nine
+Staff sign in with their CRM credentials (email + password), follow one of nine
 training tracks, and unlock stages by reading lessons, listening to calls and passing quizzes.
 The server enforces every lock and grades every quiz.
 

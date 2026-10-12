@@ -4,7 +4,6 @@ import {
   HealthResponseSchema,
   LoginResponseSchema,
   MeSchema,
-  MfaResponseSchema,
 } from '@fac-academy/shared';
 
 /**
@@ -84,14 +83,9 @@ export function apiPost(path, body) {
 
 // --- Sign-in (S03) ----------------------------------------------------------
 
-/** Step 1: CRM email + password → { next: 'challenge' } or { next: 'enrol', enrol }. */
+/** CRM email + password → the signed-in user. The server sets the session cookie. */
 export async function login(email, password) {
-  return parseWith(LoginResponseSchema, await apiPost('/api/auth/login', { email, password }));
-}
-
-/** Step 2: the 6-digit authenticator code → the signed-in user. */
-export async function verifyMfa(code) {
-  return parseWith(MfaResponseSchema, await apiPost('/api/auth/mfa', { code })).me;
+  return parseWith(LoginResponseSchema, await apiPost('/api/auth/login', { email, password })).me;
 }
 
 /** The signed-in user, or null when nobody is signed in (401). */

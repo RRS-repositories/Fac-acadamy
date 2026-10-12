@@ -30,9 +30,9 @@ export interface AppDeps {
   /** Never throws; resolves false when Redis is unreachable or not configured. */
   checkRedis: () => Promise<boolean>;
   /**
-   * Sign-in, sessions and manager account routes: database pool, session and
-   * pending-MFA stores, CRM client, limiters, MFA key and clock. Omitted only
-   * by tests that exercise health and the flag gate alone.
+   * Sign-in, sessions and manager account routes: database pool, session
+   * manager, CRM client, limiters, audit-hash key (mfaKey) and clock. Omitted
+   * only by tests that exercise health and the flag gate alone.
    */
   auth?: AuthDeps;
   /**

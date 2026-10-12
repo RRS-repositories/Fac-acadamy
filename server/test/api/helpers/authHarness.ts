@@ -23,12 +23,7 @@ import type { MediaStore } from '../../../src/media/store.js';
 import type { SummaryModel } from '../../../src/media/summaryModel.js';
 import { createLoginLimiters, emailAuditKey } from '../../../src/modules/auth/limits.js';
 import type { LoginLimitSettings } from '../../../src/modules/auth/limits.js';
-import {
-  MemoryPendingMfaStore,
-  MemorySessionStore,
-  createSessionManager,
-} from '../../../src/modules/auth/sessions.js';
-import { codeForStep, stepAt } from '../../../src/modules/auth/totp.js';
+import { MemorySessionStore, createSessionManager } from '../../../src/modules/auth/sessions.js';
 import type { JobQueue } from '../../../src/queues/queue.js';
 
 function envWithDotenv(): NodeJS.ProcessEnv {
@@ -79,13 +74,6 @@ export class Clock {
   now = (): number => this.t;
   advance(ms: number): void {
     this.t += ms;
-  }
-  /** Move to the start of the next 30-second TOTP step. */
-  nextStep(): void {
-    this.t = (stepAt(this.t) + 1) * 30_000 + 1_000;
-  }
-  code(secret: string): string {
-    return codeForStep(secret, stepAt(this.t));
   }
 }
 
@@ -180,7 +168,6 @@ export async function openTestDb(): Promise<Db> {
         auth: {
           db: pool,
           sessions: createSessionManager({ db: pool, store: sessions, now: clock.now }),
-          pending: new MemoryPendingMfaStore(clock.now),
           crm,
           limiters: createLoginLimiters(null, {
             perIpPerMinute: 1_000,
@@ -240,6 +227,8 @@ export async function openTestDb(): Promise<Db> {
           traineeIds,
         ]);
       }
+      // Sign-in no longer writes academy.trainee_mfa; this only catches a
+      // regression (auth.test.ts checks that no row appears).
       await pool.query('DELETE FROM academy.trainee_mfa WHERE trainee_id = ANY($1::bigint[])', [
         traineeIds,
       ]);
@@ -290,42 +279,20 @@ export function login(h: Harness, email: string, password: string, ip = nextIp()
     .send({ email, password });
 }
 
-export function mfa(h: Harness, pendingCookie: string | null, code: string, ip = nextIp()) {
-  const req = request(h.app)
-    .post('/api/auth/mfa')
-    .set('X-Forwarded-For', ip)
-    .set('User-Agent', 'auth-test');
-  if (pendingCookie !== null) req.set('Cookie', pendingCookie);
-  return req.send({ code });
-}
-
 export interface SignedIn {
   /** `academy_sid=<id>` for the Cookie header. */
   cookie: string;
-  secret: string;
   me: { id: number; fullName: string; email: string; role: string; track: string | null };
 }
 
-/**
- * Full sign-in: password, then enrol or challenge. `secret` is needed for a
- * returning (already enrolled) account. Moves the clock to a fresh TOTP step.
- */
-export async function signIn(h: Harness, account: FakeAccount, secret?: string): Promise<SignedIn> {
+/** Full sign-in: CRM email + password is the whole of it (no authenticator step). */
+export async function signIn(h: Harness, account: FakeAccount): Promise<SignedIn> {
   const res = await login(h, account.email, account.password);
   if (res.status !== 200)
     throw new Error(`login failed: ${res.status} ${JSON.stringify(res.body)}`);
-  const pending = cookiePair(res, 'academy_mfa');
-  const body = res.body as { next: string; enrol?: { secret: string } };
-  const key = body.next === 'enrol' ? body.enrol!.secret : secret;
-  if (key === undefined) throw new Error('signIn: account is enrolled; pass its secret');
-  h.clock.nextStep();
-  const done = await mfa(h, pending, h.clock.code(key));
-  if (done.status !== 200) {
-    throw new Error(`mfa failed: ${done.status} ${JSON.stringify(done.body)}`);
-  }
-  const cookie = cookiePair(done, 'academy_sid');
+  const cookie = cookiePair(res, 'academy_sid');
   if (cookie === null) throw new Error('no session cookie');
-  return { cookie, secret: key, me: (done.body as { me: SignedIn['me'] }).me };
+  return { cookie, me: (res.body as { me: SignedIn['me'] }).me };
 }
 
 export function get(h: Harness, path: string, cookie?: string) {

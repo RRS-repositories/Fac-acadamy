@@ -170,7 +170,7 @@ The content is settled, so the four things left describing the Admin track as tw
 
 | # | Decision |
 |---|---|
-| D1 | CRM login check through a new CRM endpoint `POST /api/auth/academy-verify` (server-to-server, shared key). The academy adds TOTP + its own sessions |
+| D1 | CRM login check through a new CRM endpoint `POST /api/auth/academy-verify` (server-to-server, shared key). The academy adds its own sessions (TOTP removed 12 Oct, D21) |
 | D2 | Same production server as the CRM, but separate apps (`academy-api`, `academy-worker`), with their own `.env`, deploy script and nginx site |
 | D3 | After a failed quiz, show right/wrong only; reveal the answers only after a pass (deliberately differs from the prototype) |
 | D4 | Recording slots with no media show as "coming soon" and never block the quiz |
@@ -183,11 +183,12 @@ The content is settled, so the four things left describing the Admin track as tw
 | D11 | New-starter sign-in: **approve first** (Q1). No academy-only login; provisioning is requested before day one |
 | D10 | Layout: `client/` (React SPA) · `server/` (API + worker) · `shared/` (contracts only) · `ops/` · `e2e/` |
 | D13 | (22 Sep) A first-time trainee starts with no track ("waiting for a manager to assign a track"); the manager assigns it (S07), or IT meanwhile with `ops/admin/set-track.ts` |
-| D14 | (22 Sep) Only CRM role `Management` = MANAGER (IT `role_overrides` can override either way); IT resets authenticators with the audited `ops/admin/reset-mfa.ts`, not an in-app role |
+| D14 | (22 Sep) Only CRM role `Management` = MANAGER (IT `role_overrides` can override either way); IT resets authenticators with the audited `ops/admin/reset-mfa.ts`, not an in-app role (no longer needed since D21) |
+| D21 | (12 Oct, user) Authenticator app removed: Sign-in is CRM email + password only: `POST /api/auth/login` creates the session in one step and `/api/auth/mfa` is gone. Reason: the enrol step (install an authenticator, scan a QR code) was blocking new joiners. Kept so a revert is a plain `git revert`: `totp.ts`, `mfaCrypto.ts`, the `academy.trainee_mfa` table (now unused; its stored secrets can be cleared later by a migration Brad applies), `ops/admin/reset-mfa.ts` and the `MFA_*` audit event names. `MFA_ENCRYPTION_KEY` stays required: it also keys the hashed email in failed-login audit rows. Trade-off: the academy no longer has a second factor and its login has no captcha, so brute-force protection is the per-IP limit and the per-email lockout (`limits.ts`). Supersedes the TOTP half of D1 and D11 and the authenticator-reset half of D14. |
 
 ## Open questions (see plan §3)
 
-- **Q1 decided (22 Sep): approve first** (D11). IT approves in Mattermost before day one, the CRM account is created, and then the starter signs in with CRM credentials + TOTP.
+- **Q1 decided (22 Sep): approve first** (D11). IT approves in Mattermost before day one, the CRM account is created, and then the starter signs in with CRM credentials (no authenticator since D21).
 - Q5: OK to run a private test copy (`academy_test` schema) on the production server in place of staging?
 - Q10: rename the repo `Fac-acadamy` → `fac-academy`?
 - **Deferred by the user:** Q2 DNS owner (domain now assumed `.com`, D9), Q3 SES sender / AWS owner, Q6 Mattermost approvers + manager mapping.

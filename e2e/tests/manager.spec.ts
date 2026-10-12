@@ -180,8 +180,8 @@ test('reassigning a track changes what the trainee sees', async ({
 
 // CONTENT_FREE_TAG: sign in, be disabled, be thrown out, be re-enabled, sign in
 // again. Not one step of it touches a stage, so CI runs it — and it is the one
-// place CI proves the real sign-in journey (the login screen, the authenticator
-// enrolment, the code) works in a browser at all.
+// place CI proves the real sign-in journey (the login screen, the CRM email and
+// password check, the session cookie) works in a browser at all.
 test(
   'disabling a trainee ends their session within five seconds',
   { tag: CONTENT_FREE_TAG },

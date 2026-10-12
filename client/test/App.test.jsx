@@ -68,8 +68,7 @@ describe('App routing and auth guards', () => {
 
   it('RequireAuth sends a signed-out visitor to /login and back after sign-in', async () => {
     mockFetch({
-      'POST /api/auth/login': [200, { next: 'challenge' }],
-      'POST /api/auth/mfa': [200, { me: MANAGER }],
+      'POST /api/auth/login': [200, { me: MANAGER }],
       ...MANAGER_ROUTES,
     });
     renderApp('/manager');
@@ -83,9 +82,6 @@ describe('App routing and auth guards', () => {
     });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await screen.findByRole('heading', { name: 'Enter your authenticator code' });
-    fireEvent.change(screen.getByLabelText('6-digit code'), { target: { value: '123456' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Verify and sign in' }));
     expect(await screen.findByRole('heading', { name: 'Trainee roster' })).toBeInTheDocument();
   });
 

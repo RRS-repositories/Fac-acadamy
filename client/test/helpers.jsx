@@ -20,9 +20,6 @@ export const MANAGER = {
   track: 'MGMT',
 };
 
-export const QR_DATA_URL =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-
 function response(status, body) {
   return {
     ok: status >= 200 && status < 300,

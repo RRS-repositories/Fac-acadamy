@@ -11,9 +11,9 @@ const SETTINGS = [
   {
     key: 'stage1AuthRequired',
     name: 'STAGE1_AUTH_REQUIRED',
-    on: 'Stage 1 needs the authenticator',
-    off: 'Stage 1 opens without the authenticator',
-    hint: 'Whether a new starter must finish authenticator setup before Stage 1.',
+    on: 'Stage 1 needs manager sign-off',
+    off: 'Trainees move past Stage 1 on their own',
+    hint: 'Whether a manager must authorise a trainee before they move past Stage 1.',
   },
   {
     key: 'academyV2',
