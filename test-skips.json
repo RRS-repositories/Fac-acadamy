@@ -10,6 +10,11 @@
       "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: a certificate is only issued when a trainee finishes a level or a department academy, and there are no stages to finish here",
       "unproven": "the whole certificate feature: that finishing a level issues exactly one certificate with a stored PDF, that issuing twice re-uses the same PDF instead of making a second one, that a department academy earns its own certificate worded from the database, who may download a certificate (its owner and a manager yes, another trainee and a signed-out visitor no, unknown id 404), that public verification answers truthfully for a real, a tampered and a revoked id and is rate-limited to 30 checks a minute per address, and that the certificate email job records the send"
     },
+    "server/test/api/completion-scope.test.ts": {
+      "max": 1,
+      "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: the grownSince case reads the real Admin academy's module count, and the throw-away CI database has no Admin stages",
+      "unproven": "that /api/track says grownSince only when a trainee finished a smaller Admin academy than the one there now, says nothing when they finished the current one, and says nothing when the recorded scope is unknown"
+    },
     "server/test/api/manager.test.ts": {
       "max": 6,
       "reason": "needs the training content, which is seeded from the prototype HTML and cannot be committed: these six cases put real quiz passes and real stage lists behind the manager's screens. The rest of the manager suite runs here",

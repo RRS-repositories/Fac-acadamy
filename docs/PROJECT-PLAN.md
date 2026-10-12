@@ -12,7 +12,7 @@ Inputs: the build pack. That is the build spec, the provisioning spec, the schem
 
 A staff training portal on its own subdomain, **`academy.fastactionclaims.com`** (working assumption, D9).
 
-- Staff sign in with their **CRM email + password** plus an **authenticator app** (TOTP).
+- Staff sign in with their **CRM email + password** (no authenticator app; removed 12 Oct, D21).
 - Each person follows one of **9 tracks**: Full Programme, Customer Service, Sales, Admin, Financial Ombudsman, Management, Payments, IT, Debt Collections.
 - Everyone does the shared Foundation core first. After that, each track sees only its own stages.
 - Each stage goes **lessons → call recordings → quiz**. Passing the quiz unlocks the next stage. The server enforces every lock and grades every quiz.
@@ -58,7 +58,7 @@ The fixture keeps the two sources apart: its nine track arrays stay **prototype-
 
 | # | Decision |
 |---|---|
-| D1 | **CRM login check:** a new CRM endpoint `POST /api/auth/academy-verify`, called server-to-server with a shared key (the normal CRM login needs a captcha). The academy adds TOTP and its own sessions. |
+| D1 | **CRM login check:** a new CRM endpoint `POST /api/auth/academy-verify`, called server-to-server with a shared key (the normal CRM login needs a captcha). The academy adds its own sessions (it also added TOTP until 12 Oct; see D21). |
 | D2 | **Hosting:** the same production server as the CRM, but as **separate apps**: `academy-api` + `academy-worker` (pm2), an nginx site, and its own `.env` and deploy script. A CRM deploy never restarts the academy. |
 | D3 | **Quiz feedback:** after a *failed* attempt, show only right/wrong per question. Reveal the correct answers only after a pass. This differs from the prototype on purpose, to stop "fail once, copy, pass". |
 | D4 | **Empty recording slots:** show them greyed out as "coming soon" and never block the quiz. Only recordings with real media count toward the gate. |
@@ -67,7 +67,7 @@ The fixture keeps the two sources apart: its nine track arrays stay **prototype-
 | D7 | **Database:** the **same Postgres database as the CRM**, with every table in its own `academy` schema and a restricted `academy_app` login (details in §5.3). |
 | D8 | **Repo:** this repo, `Fac-acadamy`, is fully separate from the CRM. The CRM repo only gets small endpoint PRs; no academy code is copied into it. |
 | D9 | **Domain (working assumption, 22 Sep):** `academy.fastactionclaims.com`, next to `crm.fastactionclaims.com`. The browser app and the API share one origin (`/` and `/api/*`), so there's no CORS and the session cookie stays host-only. Who manages DNS is still to be confirmed (Q2). |
-| D11 | **New-starter sign-in (Q1, decided 22 Sep): approve first.** IT approves the starter in Mattermost before day one, the CRM account is created, and the starter signs in to the academy with CRM credentials + TOTP. There's no academy-only login. The provisioning flow (S08) is triggered by a request raised before the starter arrives, not by their first academy sign-in. |
+| D11 | **New-starter sign-in (Q1, decided 22 Sep): approve first.** IT approves the starter in Mattermost before day one, the CRM account is created, and the starter signs in to the academy with CRM credentials (no authenticator since D21). There's no academy-only login. The provisioning flow (S08) is triggered by a request raised before the starter arrives, not by their first academy sign-in. |
 | D10 | **Code layout:** `client/` (React SPA), `server/` (API + worker), `shared/` (API contracts only), plus `ops/` and `e2e/`. See §7. |
 | D13 | **First-time trainees start with no track (22 Sep).** The trainee row is created at first sign-in with no track, and the home page says "waiting for a manager to assign a track". The manager assigns it (S07 screen; the API endpoint exists from S03). Until then IT can set it with `ops/admin/set-track.ts` (audited). Migration 0004 makes `trainees.track` optional. |
 | D15 | **No S3 — media lives on the on-prem server (23 Sep).** Production is the on-prem box, so recordings and the video are stored in a folder named by `MEDIA_ROOT`, outside the repo and outside anything nginx serves. The API streams every byte after checking the session and the stage lock (Range-aware), so there are no signed URLs and no AWS SDK. The S3 checklist items ("objects private", "signed link expires at 61 s") are replaced by: the folder is not web-reachable, the API refuses without a session or on a locked stage, and path-escape attempts are rejected. Certificates (S09) store the same way. **Backups must include the media folder** — the database alone no longer holds the media. |
@@ -76,7 +76,8 @@ The fixture keeps the two sources apart: its nine track arrays stay **prototype-
 | D18 | **Mattermost dropped (23 Sep, user).** The approval bot is not built: with approve-first (D11) the CRM account already exists, so there is nothing to approve in chat. Alerts go by email instead, and CRM change #2 (create user + setup token) is no longer needed. |
 | D19 | **No AWS, so no SES (23 Sep).** The email provider is undecided; the CRM already sends through Microsoft 365 (Graph) and SMTP. Until it is chosen, every notification and the certificate email are **composed, recorded and logged but never sent** (`ACADEMY_NOTIFY_MODE=shadow`), with one named send point to fill in. |
 | D20 | **Certificates are stored like media (23 Sep):** PDFs under `MEDIA_ROOT` at `academy/certs/`, streamed by the API; migration 0007 renames `certificates.s3_key` to `media_key`. Chromium renders them, so the server needs `npx playwright install chromium`. |
-| D14 | **Roles (22 Sep):** only the CRM role `Management` becomes MANAGER; everyone else is STAFF. An IT-set `role_overrides` row wins either way (`ops/admin/set-role-override.ts`). IT resets a lost authenticator with an audited ops command (`ops/admin/reset-mfa.ts`), not through an in-app IT role. |
+| D21 | **Authenticator app removed (12 Oct, user).** Sign-in is CRM email + password only: `POST /api/auth/login` creates the session in one step and `/api/auth/mfa` is gone. Reason: the enrol step (install an authenticator, scan a QR code) was blocking new joiners. Kept so a revert is a plain `git revert`: `totp.ts`, `mfaCrypto.ts`, the `academy.trainee_mfa` table (now unused; its stored secrets can be cleared later by a migration Brad applies), `ops/admin/reset-mfa.ts` and the `MFA_*` audit event names. `MFA_ENCRYPTION_KEY` stays required: it also keys the hashed email in failed-login audit rows. Trade-off: the academy no longer has a second factor and its login has no captcha, so brute-force protection is the per-IP limit and the per-email lockout (`limits.ts`). Supersedes the TOTP half of D1 and D11 and the authenticator-reset half of D14. |
+| D14 | **Roles (22 Sep):** only the CRM role `Management` becomes MANAGER; everyone else is STAFF. An IT-set `role_overrides` row wins either way (`ops/admin/set-role-override.ts`). IT resets a lost authenticator with an audited ops command (`ops/admin/reset-mfa.ts`), not through an in-app IT role (no longer needed since D21: there is no authenticator). |
 
 ---
 
@@ -141,7 +142,7 @@ To update it honestly: run the suites against a **migrated but unseeded** databa
 |---|---|
 | Language/runtime | Node 22 LTS, npm workspaces, **ES modules only (no CommonJS)**. **Server + shared: strict TypeScript. Client: plain JavaScript (`.jsx`)** (user instruction, 22 Sep) |
 | API | Express, `zod` for validation, `pg`. Migrations are plain SQL files applied by our own small runner (dry run by default, `--commit` to write), the same pattern as the CRM's `scripts/apply-*-migrations.mjs` |
-| Auth | `otplib` + `qrcode` (TOTP), `express-session` + `connect-redis`, a per-user session index so disabling someone deletes their sessions at once, `rate-limiter-flexible` |
+| Auth | `otplib` + `qrcode` (TOTP, unused since D21), `express-session` + `connect-redis`, a per-user session index so disabling someone deletes their sessions at once, `rate-limiter-flexible` |
 | Jobs | BullMQ with `prefix: 'academy'`. Queue names **must not contain `:`**, because BullMQ 6 throws on them, so the spec's `academy:signin-events` becomes `signin-events` under the prefix |
 | Media | Files on the on-prem server's disk under `MEDIA_ROOT` (D15), streamed by the API with Range support so long audio and video play and resume; durations read with `music-metadata` (D17). No S3, no signed URLs |
 | Email | `@aws-sdk/client-sesv2` |
@@ -220,7 +221,7 @@ fac-academy/
 │   │   ├── components/          AppShell, AuthStatusScreen, ErrorBanner, ScrollToTopOnNavigate,
 │   │   │                        auth/ · training/ (StageCard, LockedCard, NoSeekPlayer, LessonBody …) · manager/
 │   │   ├── pages/
-│   │   │   ├── auth/            Login, MfaEnrol, MfaChallenge
+│   │   │   ├── auth/            Login (one step since D21)
 │   │   │   ├── training/        Dashboard, Stage, Lesson, Quiz
 │   │   │   ├── reference/       StatusGuide
 │   │   │   ├── certs/           MyCertificates, VerifyCertificate (public page)
@@ -341,7 +342,7 @@ We work **one section at a time, in order**. Each section ends with its checklis
 | 0 | Setup | Repo scaffolding, `CLAUDE.md`, hooks, CI, local Docker stack | — | 0.5 d |
 | 1 | **S01 Foundation** | Env loader, migrations 0000–0002, health endpoint, feature flag, CI green | — | 1 d |
 | 2 | **S02 Content seed** | All 28 stages / 66 lessons / 231 questions / 34 status rows in the DB, verified | S01 | 1.5 d |
-| 3 | **S03 Auth** | CRM login + TOTP + sessions + disable + lockout + audit | CRM PR #1 | 2–3 d |
+| 3 | **S03 Auth** | CRM login + sessions (TOTP removed in D21) + disable + lockout + audit | CRM PR #1 | 2–3 d |
 | 4 | **S04 API & gating** | `gate()`, track list, lessons, server-side grading, completions | S02, S03 | 2 d |
 | 5 | **S05 Front-end** | React port matching the prototype; scroll rules; accessibility | S04 | 3–4 d |
 | 6 | **S06 Media** | S3 upload, streaming, full-listen tracking, manager upload + job stubs | S05, video PII review | 2–3 d |
@@ -387,8 +388,8 @@ Estimated total **≈ 19–24 dev-days**, before review cycles.
 
 ### S03: auth
 - [ ] CRM PR #1 (`academy-verify`) merged and deployed
-- [ ] CRM credentials + TOTP → session; role shows in `/api/me`
-- [ ] Bad password and bad TOTP both rejected and audited
+- [ ] CRM credentials → session (no TOTP, D21); role shows in `/api/me`
+- [ ] Bad password rejected and audited
 - [ ] Staff calling manager endpoints → 403
 - [ ] Disable during an active session → next request refused within 5 s (timed script)
 - [ ] Disabled account can't sign in; re-enable restores access

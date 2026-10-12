@@ -14,9 +14,7 @@
 //     ops/dev/seed-test-accounts.ts the S04 sweeps use), clearing their
 //     progress;
 //  2. makes sure each mock-CRM sign-in account has a trainee row, clears its
-//     progress, re-enables it, ends its old sessions and DELETES its
-//     authenticator, so every spec run enrols a fresh TOTP secret it can
-//     generate codes from;
+//     progress, re-enables it and ends its old sessions;
 //  3. deletes those accounts' certificates and the PDFs behind them, so the
 //     certificate journey proves an issue rather than finding last run's row;
 //  4. installs a SHORT fixture recording — a 20-second generated WAV — on the
@@ -402,11 +400,6 @@ export async function prepareE2e(
   const certificatesRemoved = await removeCertificates(db, ids);
   await endSessions(db, ids);
 
-  // A fresh authenticator every run: the first sign-in then enrols, which is
-  // the only moment the TOTP secret is handed out, and the only way a test can
-  // generate a real code.
-  await db.query('DELETE FROM academy.trainee_mfa WHERE trainee_id = ANY($1::bigint[])', [ids]);
-
   const fixture = seeded ? await installFixtureRecording(db) : null;
 
   return {
@@ -461,8 +454,7 @@ async function main(): Promise<number> {
         `\nProgress cleared: ${String(
           Object.values(result.cleared).reduce((n, v) => n + v, 0),
         )} row(s) across ${String(PROGRESS_TABLES.length)} tables; ` +
-          `${String(result.certificatesRemoved)} certificate(s) removed; ` +
-          `authenticators reset.`,
+          `${String(result.certificatesRemoved)} certificate(s) removed; old sessions ended.`,
       );
       if (result.fixture === null) {
         console.log(

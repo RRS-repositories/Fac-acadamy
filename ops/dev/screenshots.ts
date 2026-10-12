@@ -31,7 +31,6 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { authenticator } from 'otplib';
 import { chromium } from 'playwright';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { loadDotenvIfPresent } from '../../server/src/config/dotenv.js';
@@ -269,46 +268,39 @@ async function apiPost(page: Page, apiPath: string): Promise<number> {
   );
 }
 
+/** The session cookie POST /api/auth/login sets (server/src/modules/auth/cookies.ts). */
+const SESSION_COOKIE = 'academy_sid';
+
 /**
- * Sign in through the real UI. A fresh authenticator enrolment is forced
- * first (the MFA row is deleted), so the login response carries the secret and
- * the code can be generated here with otplib.
+ * Sign in through the real UI: email and password, one step. The login
+ * response sets the session cookie, which the browser context keeps for every
+ * view captured after it.
  */
 async function signInOnce(page: Page, baseUrl: string, subject: Subject): Promise<void> {
   await page.goto(`${baseUrl}/login`, { waitUntil: 'networkidle' });
   await page.getByLabel('Work email').fill(subject.email);
-  await page.getByLabel('Password').fill(MOCK_PASSWORD);
+  await page.getByLabel('Password', { exact: true }).fill(MOCK_PASSWORD);
 
+  // null when a dev-server reload swallows the response; the cookie check
+  // below still decides whether the sign-in worked.
   const loginResponse = page
     .waitForResponse(
       (res) => res.url().endsWith('/api/auth/login') && res.request().method() === 'POST',
       { timeout: VIEW_TIMEOUT_MS },
     )
-    .then(async (res) => {
-      const body = (await res.json()) as { enrol?: { secret?: string } };
-      return body.enrol?.secret ?? null;
-    })
     .catch(() => null);
 
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  const code = page.getByLabel('6-digit code');
-  await code.waitFor({ timeout: VIEW_TIMEOUT_MS });
-
-  // The secret comes from the login response, or — when a dev-server reload
-  // swallows that body — from the key the enrolment step prints on screen.
-  let secret = await loginResponse;
-  if (secret === null) {
-    const printed = (await page.locator('details code').first().textContent()) ?? '';
-    const cleaned = printed.replace(/\s+/g, '');
-    if (/^[A-Z2-7]{16,}$/.test(cleaned)) secret = cleaned;
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  const login = await loginResponse;
+  if (login !== null && login.status() !== 200) {
+    throw new DevError(`POST /api/auth/login answered ${String(login.status())}`);
   }
-  if (secret === null) {
-    throw new DevError('no enrolment secret in the sign-in response or on the enrolment step');
-  }
-
-  await code.fill(authenticator.clone({ step: 30, digits: 6 }).generate(secret));
-  await page.getByRole('button', { name: /sign in/i }).click();
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: VIEW_TIMEOUT_MS });
+
+  const cookies = await page.context().cookies(baseUrl);
+  if (!cookies.some((c) => c.name === SESSION_COOKIE)) {
+    throw new DevError(`signed in, but no ${SESSION_COOKIE} session cookie was set`);
+  }
 }
 
 /** Signs in, with one retry: the dev server reloads while other work lands. */
@@ -319,15 +311,6 @@ async function signIn(page: Page, baseUrl: string, subject: Subject): Promise<vo
     console.log(`  (first sign-in attempt failed: ${(err as Error).message}; retrying)`);
     await signInOnce(page, baseUrl, subject);
   }
-}
-
-/** Deletes the authenticator enrolment so the next sign-in returns a secret. */
-async function resetMfa(db: Queryable, email: string): Promise<void> {
-  await db.query(
-    `DELETE FROM academy.trainee_mfa
-      WHERE trainee_id IN (SELECT id FROM academy.trainees WHERE lower(email) = lower($1))`,
-    [email],
-  );
 }
 
 async function setTrack(db: Queryable, email: string, track: string): Promise<void> {
@@ -390,7 +373,6 @@ async function captureApp(
   });
 
   // 2. Dashboard on a department track, in its own signed-out context.
-  await resetMfa(db, DEPARTMENT.email);
   try {
     await signIn(page, args.baseUrl, DEPARTMENT);
     await setTrack(db, DEPARTMENT.email, DEPARTMENT.track);
@@ -403,7 +385,6 @@ async function captureApp(
   await context.clearCookies();
 
   // 3. Everything else on the agent track: dashboard, stage, lesson, quiz.
-  await resetMfa(db, AGENT.email);
   await setTrack(db, AGENT.email, AGENT.track);
   let signedIn = false;
   try {

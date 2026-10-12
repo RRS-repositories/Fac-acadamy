@@ -3,9 +3,8 @@ import path from 'node:path';
 import { STATE_DIR } from './env.js';
 
 // Only five accounts can sign in locally (the mock CRM's invented users), so
-// two workers must never drive the same one: they would fight over its track,
-// its progress and — because the server refuses a TOTP step twice — over its
-// sign-in itself.
+// two workers must never drive the same one: they would fight over its track
+// and its progress, and one worker's reset() would undo another's test.
 //
 // Each worker therefore LEASES an account for its whole life. The lease is a
 // directory under e2e/.state/leases: mkdir either creates it or fails, which

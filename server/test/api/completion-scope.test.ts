@@ -488,7 +488,7 @@ describeDb('what the dashboard is told about an academy that has grown', () => {
     return heading;
   }
 
-  it('says grownSince only when the recorded scope is smaller than what is there now', async () => {
+  it('says grownSince only when the recorded scope is smaller than what is there now', async (ctx) => {
     const trainee = await newTrainee('ADMIN' as Academy);
     await need().pool.query(
       `INSERT INTO academy.dept_completions (trainee_id, dept) VALUES ($1, 'ADMIN')`,
@@ -496,7 +496,13 @@ describeDb('what the dashboard is told about an academy that has grown', () => {
     );
 
     // How many modules the seeded Admin academy has today, read back rather
-    // than assumed: it is the number that grew in the first place.
+    // than assumed: it is the number that grew in the first place. It needs the
+    // seeded content (prototype HTML, never committed); without it there is no
+    // Admin academy to have grown, so the case is skipped (see test-skips.json).
+    const seeded = await need().pool.query<{ n: string }>(
+      `SELECT count(*) AS n FROM academy.stages WHERE dept = 'ADMIN'`,
+    );
+    if (Number(seeded.rows[0]?.n ?? 0) < 2) ctx.skip();
     const now = await deptHeadingFor(trainee, null);
     expect(now.currentCount).toBeGreaterThan(1);
 

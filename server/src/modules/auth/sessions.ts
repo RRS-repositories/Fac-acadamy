@@ -16,11 +16,9 @@ import type { Role } from '@fac-academy/shared';
 export const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
 /** A session is written back at most this often (sliding expiry, not every request). */
 export const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
-export const PENDING_MFA_TTL_MS = 5 * 60 * 1000;
 
 export const SESSION_KEY_PREFIX = 'academy:sess:';
 export const USER_SESSIONS_KEY_PREFIX = 'academy:user-sess:';
-export const PENDING_MFA_KEY_PREFIX = 'academy:mfa:';
 
 export type Clock = () => number;
 
@@ -45,23 +43,6 @@ export interface SessionStore {
   destroy(id: string): Promise<SessionData | null>;
   /** Deletes every session of the trainee at once. Returns how many there were. */
   revokeAll(traineeId: number): Promise<number>;
-}
-
-export interface PendingMfa {
-  traineeId: number;
-  /** Normalised (lower-case) email: the key for the failed-attempt lockout. */
-  email: string;
-  stage: 'enrol' | 'challenge';
-  crmRole: string;
-  /** base64 of the encrypted TOTP secret while enrolling; never the plain secret. */
-  secretEnc?: string;
-}
-
-export interface PendingMfaStore {
-  create(data: PendingMfa): Promise<string>;
-  /** Null when unknown or older than 5 minutes. */
-  get(id: string): Promise<PendingMfa | null>;
-  destroy(id: string): Promise<void>;
 }
 
 /** 32 random bytes, base64url: the only thing the cookie carries. */
@@ -128,32 +109,6 @@ export class MemorySessionStore implements SessionStore {
       }
     }
     return count;
-  }
-}
-
-export class MemoryPendingMfaStore implements PendingMfaStore {
-  private readonly pending = new Map<string, { data: PendingMfa; expiresAt: number }>();
-
-  constructor(private readonly now: Clock = Date.now) {}
-
-  async create(data: PendingMfa): Promise<string> {
-    const id = newOpaqueId();
-    this.pending.set(id, { data: { ...data }, expiresAt: this.now() + PENDING_MFA_TTL_MS });
-    return id;
-  }
-
-  async get(id: string): Promise<PendingMfa | null> {
-    const entry = this.pending.get(id);
-    if (entry === undefined) return null;
-    if (this.now() >= entry.expiresAt) {
-      this.pending.delete(id);
-      return null;
-    }
-    return { ...entry.data };
-  }
-
-  async destroy(id: string): Promise<void> {
-    this.pending.delete(id);
   }
 }
 
@@ -239,27 +194,6 @@ export class RedisSessionStore implements SessionStore {
     const deleted = await redis.del(...ids.map((id) => SESSION_KEY_PREFIX + id), indexKey);
     // `deleted` includes the index key itself.
     return Math.max(0, deleted - 1);
-  }
-}
-
-export class RedisPendingMfaStore implements PendingMfaStore {
-  constructor(private readonly client: Redis) {}
-
-  async create(data: PendingMfa): Promise<string> {
-    const redis = await ready(this.client);
-    const id = newOpaqueId();
-    await redis.set(PENDING_MFA_KEY_PREFIX + id, JSON.stringify(data), 'PX', PENDING_MFA_TTL_MS);
-    return id;
-  }
-
-  async get(id: string): Promise<PendingMfa | null> {
-    const redis = await ready(this.client);
-    return parseJson<PendingMfa>(await redis.get(PENDING_MFA_KEY_PREFIX + id));
-  }
-
-  async destroy(id: string): Promise<void> {
-    const redis = await ready(this.client);
-    await redis.del(PENDING_MFA_KEY_PREFIX + id);
   }
 }
 

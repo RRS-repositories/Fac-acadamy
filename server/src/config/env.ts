@@ -44,8 +44,12 @@ const ConfigSchema = DbSettingsSchema.extend({
   // Required in production; optional locally (health then reports redis:false).
   REDIS_URL: z.string().url().optional(),
 
-  // TOTP secrets are encrypted with this key (base64 of exactly 32 bytes).
-  // Decoded once here; the value is never logged.
+  // Base64 of exactly 32 bytes; decoded once here, the value is never logged.
+  // Still required although sign-in no longer has an authenticator step: it
+  // keys the HMAC that replaces the typed address in failed-sign-in audit rows
+  // (emailAuditKey in modules/auth/limits.ts), and changing it breaks the link
+  // between old and new rows. (It also decrypts the TOTP secrets still held in
+  // academy.trainee_mfa, which nothing reads at sign-in any more.)
   MFA_ENCRYPTION_KEY: z.string().transform((value, ctx) => {
     try {
       return parseMfaKey(value);

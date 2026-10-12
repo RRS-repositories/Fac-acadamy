@@ -5,9 +5,9 @@
 //   npx tsx ops/load/load-test.ts --expect-db academy_dev --users 50 --duration 60 --think 0
 //
 // It drives the RUNNING local API over HTTP. Every virtual trainee signs in
-// for real — the mock CRM account, then a TOTP code generated here from the
-// enrolment secret the server hands back — and then loops through what a
-// trainee actually does:
+// for real — the mock CRM account's email and password, one step, which sets
+// the academy_sid session cookie — and then loops through what a trainee
+// actually does:
 //
 //   GET  /api/track                     the dashboard
 //   GET  /api/stage/:code               open the available stage
@@ -36,7 +36,6 @@
 // Nothing here can be pointed at a real installation by accident.
 
 import { setTimeout as sleep } from 'node:timers/promises';
-import { authenticator } from 'otplib';
 import { MOCK_CRM_ACCOUNTS } from '../../server/src/integrations/crm/mockCrm.js';
 import { DevError, type Queryable, connectDev, runIfMain, table } from '../dev/lib.js';
 import {
@@ -61,8 +60,6 @@ const MOCK_PASSWORD = 'dev-password';
  * after it is a plain lessons-and-quiz stage.
  */
 const LOAD_TRACKS = ['CS', 'SALES'] as const;
-
-const TOTP = authenticator.clone({ step: 30, digits: 6 });
 
 /** One 64 KB read, the size a browser asks for when it seeks in a recording. */
 const RANGE_BYTES = 64 * 1024;
@@ -221,36 +218,6 @@ async function visibleStagesFor(db: Queryable, track: string): Promise<VisibleSt
 }
 
 /**
- * One pg Client cannot run two queries at once, and the sign-in lanes run in
- * parallel. Everything that touches the database goes through this queue.
- */
-function createDbQueue(): <T>(fn: () => Promise<T>) => Promise<T> {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = tail.then(fn, fn);
-    tail = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next;
-  };
-}
-
-async function resetMfa(
-  db: Queryable,
-  queue: <T>(fn: () => Promise<T>) => Promise<T>,
-  email: string,
-): Promise<void> {
-  await queue(() =>
-    db.query(
-      `DELETE FROM academy.trainee_mfa
-        WHERE trainee_id IN (SELECT id FROM academy.trainees WHERE lower(email) = lower($1))`,
-      [email],
-    ),
-  );
-}
-
-/**
  * Puts the account on `track` and walks it forward to a sensible working
  * position: every stage before the "work stage" is marked passed, so that
  *
@@ -327,31 +294,24 @@ async function prepareAccount(
 // Sign-in
 // ---------------------------------------------------------------------------
 
-interface LoginBody {
-  next: 'enrol' | 'challenge';
-  enrol?: { secret?: string };
-}
+/** The session cookie POST /api/auth/login sets (server/src/modules/auth/cookies.ts). */
+const SESSION_COOKIE = 'academy_sid';
 
-interface MeBody {
+interface LoginBody {
   me?: { id?: number };
 }
 
 /**
- * The real two-step sign-in. The authenticator enrolment is cleared first, so
- * the login response carries the secret and the code can be generated here —
- * the same trick ops/dev/screenshots.ts uses, and the reason sign-ins for one
- * account must not overlap.
+ * The real sign-in: one POST with the mock CRM email and password. The answer
+ * is `{ me }` and the session cookie, which the user's jar keeps for every
+ * call after this one.
  */
 async function signIn(
   http: HttpClient,
-  db: Queryable,
-  queue: <T>(fn: () => Promise<T>) => Promise<T>,
   user: VirtualUser,
   recorder: Recorder,
   startedAt: number,
 ): Promise<boolean> {
-  await resetMfa(db, queue, user.email);
-
   const login = await call(
     http,
     user,
@@ -369,32 +329,17 @@ async function signIn(
     console.error(`  user ${String(user.index)}: sign-in refused (${String(login.status)}).`);
     return false;
   }
-  const body = parseJson<LoginBody>(login.body);
-  const secret = body?.enrol?.secret;
-  if (secret === undefined) {
-    console.error(`  user ${String(user.index)}: no enrolment secret in the sign-in response.`);
+  if (!user.jar.has(SESSION_COOKIE)) {
+    console.error(
+      `  user ${String(user.index)}: no ${SESSION_COOKIE} cookie in the sign-in response.`,
+    );
     return false;
   }
-
-  const mfa = await call(
-    http,
-    user,
-    {
-      name: 'POST /api/auth/mfa',
-      method: 'POST',
-      path: '/api/auth/mfa',
-      body: { code: TOTP.generate(secret) },
-      expect: [200],
-    },
-    recorder,
-    startedAt,
-  );
-  if (!mfa.ok) {
-    console.error(`  user ${String(user.index)}: the code was refused (${String(mfa.status)}).`);
+  const id = parseJson<LoginBody>(login.body)?.me?.id;
+  if (id === undefined) {
+    console.error(`  user ${String(user.index)}: no signed-in user in the sign-in response.`);
     return false;
   }
-  const id = parseJson<MeBody>(mfa.body)?.me?.id;
-  if (id === undefined) return false;
   user.traineeId = id;
   return true;
 }
@@ -700,7 +645,6 @@ async function main(): Promise<number> {
   const args = parsed;
 
   const db = await connectDev(args.expectDb, 'academy-load-test');
-  const dbQueue = createDbQueue();
   const http = createHttpClient(args.baseUrl, args.users + 8);
   const signInRec = new Recorder();
   const loadRec = new Recorder();
@@ -750,7 +694,10 @@ async function main(): Promise<number> {
       answers: [],
     }));
 
-    // ---- 1. sign in, one lane per identity (a TOTP enrolment cannot overlap) --
+    // ---- 1. sign in, one lane per identity ---------------------------------
+    // Sign-ins for one identity run one after another, so at most one per
+    // identity is in flight: the sign-in phase measures the same concurrency
+    // as earlier runs, and is comparable with them.
     console.log('Signing in...');
     const lanes = new Map<string, VirtualUser[]>();
     for (const u of users) {
@@ -762,7 +709,7 @@ async function main(): Promise<number> {
     await Promise.all(
       [...lanes.values()].map(async (lane) => {
         for (const user of lane) {
-          if (await signIn(http, db, dbQueue, user, signInRec, startedAt)) signedIn.push(user);
+          if (await signIn(http, user, signInRec, startedAt)) signedIn.push(user);
         }
       }),
     );

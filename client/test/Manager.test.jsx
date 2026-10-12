@@ -705,14 +705,14 @@ describe('Manager roster', () => {
   it('shows the three settings read-only, with no control to change them', async () => {
     mockFetch(managerRoutes());
     renderApp('/manager');
-    await screen.findByText('Stage 1 needs the authenticator');
+    await screen.findByText('Stage 1 needs manager sign-off');
 
     const strip = document.querySelector('[data-config="stage1AuthRequired"]').closest('ul');
     expect(within(strip).getByText('STAGE1_AUTH_REQUIRED')).toBeInTheDocument();
     expect(document.querySelector('[data-config="stage1AuthRequired"]')).toHaveTextContent('On');
     expect(document.querySelector('[data-config="academyV2"]')).toHaveTextContent('On');
     expect(document.querySelector('[data-config="provisioning"]')).toHaveTextContent('Off');
-    expect(within(strip).getByText('Stage 1 needs the authenticator')).toBeInTheDocument();
+    expect(within(strip).getByText('Stage 1 needs manager sign-off')).toBeInTheDocument();
     expect(within(strip).queryByRole('button')).toBeNull();
     expect(within(strip).queryByRole('checkbox')).toBeNull();
   });

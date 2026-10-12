@@ -80,9 +80,7 @@ the teardown). It:
 1. re-seeds the nine per-track dev accounts and the manager
    (`ops/dev/seed-test-accounts.ts`) and clears their progress;
 2. resets the five sign-in accounts to day one — no progress, no certificates,
-   enabled, old sessions ended — and **deletes their authenticators**, so the
-   first sign-in of the run enrols a fresh TOTP secret that a test can generate
-   codes from;
+   enabled, old sessions ended;
 3. installs a **20-second fixture recording** on the first empty slot of stage
    `s4`: a generated WAV under `MEDIA_ROOT`. The teardown puts that slot back to
    "coming soon" and deletes the file, so `ops/seed/verify-seed.ts` still counts
@@ -119,9 +117,8 @@ user and cannot. So:
   (`helpers/lease.ts`, an atomic `mkdir`), and tests inside a file run in order;
 * the suite is metered to four sign-ins a rolling minute
   (`helpers/throttle.ts`), because the API allows five a minute from one IP
-  address;
-* the server refuses a TOTP step twice, so a worker signs in **once** and every
-  test reuses those cookies (`helpers/test.ts`).
+  address — which is also why a worker signs in **once** and every test reuses
+  those cookies (`helpers/test.ts`).
 
 Four staff accounts exist, so three workers plus a spare for the re-sign-in the
 manager spec needs is the practical ceiling.

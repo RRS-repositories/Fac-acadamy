@@ -2,7 +2,6 @@ import { test as base } from '@playwright/test';
 import type { Browser, BrowserContextOptions, Page } from '@playwright/test';
 import { resetTrainee } from './db.js';
 import { claim, release } from './lease.js';
-import { rememberSecret, rememberedSecret } from './secrets.js';
 import { captureSignedInState } from './signin.js';
 import type { StorageState } from './signin.js';
 import { accountFor, prepared } from './state.js';
@@ -10,17 +9,16 @@ import type { PreparedAccount } from './state.js';
 
 // The suite's fixtures.
 //
-// Only five accounts can sign in (the mock CRM's invented users), and the
-// server refuses the same TOTP step twice, so an account belongs to ONE worker
-// for that worker's whole life: `staff` leases one, signs in once through the
-// real /login screen, and every test in that worker opens a page with those
-// cookies. A test never inherits another test's progress, because a spec's
-// own `reset()` puts its account back to day one first.
+// Only five accounts can sign in (the mock CRM's invented users), so an
+// account belongs to ONE worker for that worker's whole life: `staff` leases
+// one, signs in once through the real /login screen, and every test in that
+// worker opens a page with those cookies. Signing in once, rather than per
+// test, keeps the run under the API's five-a-minute sign-in limit per IP
+// (helpers/throttle.ts). A test never inherits another test's progress,
+// because a spec's own `reset()` puts its account back to day one first.
 
 export interface Session {
   account: PreparedAccount;
-  /** The TOTP secret this worker enrolled, so it can sign in again. */
-  secret: string;
   state: StorageState;
   /** Signs in again (after a disable, or a sign-out) and refreshes `state`. */
   refresh(): Promise<void>;
@@ -40,19 +38,12 @@ async function makeSession(
   pages: Page[],
 ): Promise<[Session, () => Promise<void>]> {
   const account = accountFor(email);
-  // The secret comes from the enrolment screen the first time this account
-  // signs in during the run; a worker that starts later (Playwright replaces a
-  // worker after a failed test) reads it back rather than trying to enrol an
-  // account that is already enrolled.
-  const { state, secret } = await captureSignedInState(browser, email, rememberedSecret(email));
-  rememberSecret(email, secret);
+  const state = await captureSignedInState(browser, email);
   const session: Session = {
     account,
-    secret,
     state,
     async refresh() {
-      const next = await captureSignedInState(browser, email, secret);
-      session.state = next.state;
+      session.state = await captureSignedInState(browser, email);
     },
     async reset(track) {
       await resetTrainee(account.traineeId, track);

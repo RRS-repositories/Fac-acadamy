@@ -13,9 +13,7 @@ import { createLocalMediaStore } from '../media/store.js';
 import { createOllamaSummariser } from '../media/summaryModel.js';
 import { createLoginLimiters } from '../modules/auth/limits.js';
 import {
-  MemoryPendingMfaStore,
   MemorySessionStore,
-  RedisPendingMfaStore,
   RedisSessionStore,
   createSessionManager,
 } from '../modules/auth/sessions.js';
@@ -93,7 +91,8 @@ if (config.NODE_ENV !== 'production' && config.COOKIE_SECURE) {
   console.warn(
     '[academy-api] WARNING: COOKIE_SECURE=true outside production. A browser only keeps a Secure' +
       ' cookie from an https page (or from localhost), so signing in over http:// on any other' +
-      ' host will fail at the code step with mfa_required and nothing will say why.',
+      ' host drops the session cookie: sign-in answers 200, then every request after it is' +
+      ' 401 not_signed_in and nothing will say why.',
   );
 }
 
@@ -125,7 +124,6 @@ if (redis === null) {
   console.warn('[academy-api] REDIS_URL not set: sessions and rate limits are in memory');
 }
 const sessionStore = redis ? new RedisSessionStore(redis) : new MemorySessionStore();
-const pendingStore = redis ? new RedisPendingMfaStore(redis) : new MemoryPendingMfaStore();
 
 const sessions = createSessionManager({ db: pool, store: sessionStore });
 
@@ -193,7 +191,6 @@ const app = createApp({
   auth: {
     db: pool,
     sessions,
-    pending: pendingStore,
     crm,
     limiters: createLoginLimiters(redis),
     mfaKey: config.MFA_ENCRYPTION_KEY,

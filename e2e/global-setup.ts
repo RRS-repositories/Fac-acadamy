@@ -3,7 +3,6 @@ import type { FullConfig } from '@playwright/test';
 import { STATE_DIR, baseUrl, loadEnv, targetDatabase } from './helpers/env.js';
 import { resetLeases } from './helpers/lease.js';
 import { runOpsScript } from './helpers/run-ops.js';
-import { resetSecrets } from './helpers/secrets.js';
 import { PREPARED_FILE } from './helpers/state.js';
 import type { PreparedState } from './helpers/state.js';
 import { CONTENT_FREE_TAG, isContentFreeSelection } from './helpers/tags.js';
@@ -16,8 +15,8 @@ import { resetSignInMeter } from './helpers/throttle.js';
 //  2. runs ops/dev/e2e-prepare.ts, which carries the local-only database
 //     guards (the name must contain 'dev' or 'test' and never 'prod'/'live')
 //     and does all the state work: the nine per-track dev accounts, the five
-//     sign-in accounts reset to day one with their authenticators cleared, and
-//     the short fixture recording the listening journey needs;
+//     sign-in accounts reset to day one, and the short fixture recording the
+//     listening journey needs;
 //  3. clears the account leases and the sign-in meter from any previous run.
 //
 // ON A DATABASE WITH NO TRAINING CONTENT (a CI runner: the content is seeded
@@ -63,9 +62,6 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 
   resetLeases();
   resetSignInMeter();
-  // The authenticators were just deleted, so any secret from a previous run is
-  // dead: the first sign-in of this run enrols a new one.
-  resetSecrets();
 
   const prepared = JSON.parse(json) as PreparedState;
 

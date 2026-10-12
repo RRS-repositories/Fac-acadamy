@@ -5,11 +5,7 @@ import type { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { createLoginLimiters } from '../../src/modules/auth/limits.js';
-import {
-  MemoryPendingMfaStore,
-  MemorySessionStore,
-  createSessionManager,
-} from '../../src/modules/auth/sessions.js';
+import { MemorySessionStore, createSessionManager } from '../../src/modules/auth/sessions.js';
 import { FakeCrm, TEST_MFA_KEY } from './helpers/authHarness.js';
 
 // Any query is a test failure here.
@@ -25,7 +21,6 @@ function app(flagEnabled: boolean) {
     auth: {
       db: noDb,
       sessions: createSessionManager({ db: noDb, store: new MemorySessionStore() }),
-      pending: new MemoryPendingMfaStore(),
       crm: new FakeCrm(),
       limiters: createLoginLimiters(null),
       mfaKey: TEST_MFA_KEY,
@@ -38,7 +33,6 @@ function app(flagEnabled: boolean) {
 describe('ACADEMY_V2 off: the auth routes are behind the flag', () => {
   it.each([
     ['post', '/api/auth/login'],
-    ['post', '/api/auth/mfa'],
     ['post', '/api/auth/heartbeat'],
     ['post', '/api/auth/logout'],
     ['get', '/api/me'],
@@ -63,10 +57,12 @@ describe('without a session', () => {
     expect(res.body).toEqual({ error: 'not_signed_in' });
   });
 
-  it('POST /api/auth/mfa → 401 mfa_required', async () => {
+  // The authenticator step is gone: the route no longer exists, so it falls
+  // through to the JSON 404 (no training router here to answer 401 first).
+  it('POST /api/auth/mfa → 404 not_found (the authenticator step was removed)', async () => {
     const res = await request(app(true)).post('/api/auth/mfa').send({ code: '123456' });
-    expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: 'mfa_required' });
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'not_found' });
   });
 
   it('POST /api/auth/logout → 204 and clears the cookie', async () => {
