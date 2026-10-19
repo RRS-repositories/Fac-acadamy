@@ -37,7 +37,17 @@ function response(status, body) {
  * GET /api/me defaults to 401 (signed out).
  */
 export function mockFetch(routes = {}) {
-  const table = { 'GET /api/me': [401, { error: 'not_signed_in' }], ...routes };
+  // Defaults every signed-in screen needs, so an individual test only names
+  // the routes it actually cares about. /api/videos is here because the
+  // journey rail asks for the video shelf on EVERY training page: without a
+  // default, sixteen test files would each have to mock a list they do not
+  // care about, and forgetting it looks like a mysterious timeout rather than
+  // a missing mock. A test that is about the shelf overrides it.
+  const table = {
+    'GET /api/me': [401, { error: 'not_signed_in' }],
+    'GET /api/videos': [200, { videos: [] }],
+    ...routes,
+  };
   const fn = vi.fn(async (path, init = {}) => {
     const key = `${init.method ?? 'GET'} ${path}`;
     const entry = table[key];

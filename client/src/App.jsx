@@ -16,6 +16,7 @@ import Dashboard from './pages/training/Dashboard.jsx';
 import Lesson from './pages/training/Lesson.jsx';
 import Quiz from './pages/training/Quiz.jsx';
 import Stage from './pages/training/Stage.jsx';
+import Videos from './pages/training/Videos.jsx';
 import StatusGuide from './pages/reference/StatusGuide.jsx';
 
 // The router itself lives in main.jsx (BrowserRouter), so tests can wrap
@@ -100,6 +101,16 @@ export default function App() {
               <RequireManager>
                 <TrackPreview />
               </RequireManager>
+            }
+          />
+          <Route
+            path="/videos"
+            element={
+              // The video shelf belongs to no stage, so it belongs to no track
+              // either: a new starter waiting for a track can still watch it.
+              <RequireAuth requireTrack={false}>
+                <Videos />
+              </RequireAuth>
             }
           />
           <Route
