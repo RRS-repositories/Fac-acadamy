@@ -6,6 +6,7 @@ import type { Pool } from 'pg';
 import type { CertificateIssuer } from './certs/issue.js';
 import { certsRouter } from './certs/routes.js';
 import { certVerifyRouter } from './certs/verify.routes.js';
+import { videoLibraryRouter } from './media/library.js';
 import { mediaProgressRouter } from './media/progress.js';
 import { mediaStreamRouter } from './media/routes.js';
 import type { MediaStore } from './media/store.js';
@@ -145,6 +146,18 @@ export function createApp(deps: AppDeps): Express {
     // same requireAuth and the same gate().
     if (deps.mediaStore !== undefined) {
       app.use('/api/media', mediaStreamRouter({ ...deps.training, store: deps.mediaStore }));
+      // The video library (19 Oct): GET /api/videos and
+      // GET /api/videos/:videoId/stream — the training videos that belong to no
+      // stage, listed under the trainee's department training.
+      //
+      // Its own prefix, not /api/media, because these two paths answer different
+      // questions and must never be confused: everything under /api/media runs
+      // gate() on a recording's stage, and these rows have no stage to gate. The
+      // library router does the same requireAuth and sits behind the same flag,
+      // and it shares the streaming code's shape (Range, headers, audit) without
+      // sharing its lookup — so a stage's recording cannot be fetched here and a
+      // library video cannot be fetched there. See media/library.ts.
+      app.use('/api/videos', videoLibraryRouter({ ...deps.training, store: deps.mediaStore }));
     }
     // The one saved summary of what was said on a recording (0009). Mounted
     // whether or not a model is configured: with none it answers 'disabled',

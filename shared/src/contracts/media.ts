@@ -259,3 +259,43 @@ export function mediaStreamPath(recordingId: number | string): string {
 export function mediaProgressPath(recordingId: number | string): string {
   return `/api/media/${encodeURIComponent(String(recordingId))}/progress`;
 }
+
+// ---------------------------------------------------------------------------
+// The video library (user decision, 19 Oct)
+// ---------------------------------------------------------------------------
+
+/**
+ * A training video that belongs to NO stage.
+ *
+ * Everything else in the academy hangs off a stage, and a stage is what
+ * `gate()` checks. These do not: they are a short, hand-picked reference shelf
+ * the trainee can watch at any time, listed under their department training on
+ * the dashboard. A video is in the library exactly when `stage_id IS NULL`, so
+ * there is no new column, no new table and no migration — a recording either
+ * belongs to a stage or it is on the shelf.
+ *
+ * Two consequences, both deliberate:
+ *
+ *   * Nothing here is locked, because there is no stage to be locked behind.
+ *     The library is for material that is useful whenever somebody wants it.
+ *   * Nothing here earns credit. Watching a library video does not pay any
+ *     stage's listening requirement, so it can never become a way around the
+ *     no-skip player. There are no beacons on this path at all.
+ *
+ * The stage-gated route is NOT relaxed to serve these: `loadGatedRecording`
+ * inner-joins stages, so a stage-less row already answers 404 there, and that
+ * stays true. The library has its own lookup and its own route.
+ */
+export const LibraryVideoSchema = z.object({
+  id: z.number().int().positive(),
+  title: z.string(),
+  description: z.string().nullable(),
+  /** Whole seconds, or null when the file's length could not be read. */
+  durationSecs: z.number().int().positive().nullable(),
+});
+export type LibraryVideo = z.infer<typeof LibraryVideoSchema>;
+
+export const VideoLibraryResponseSchema = z.object({
+  videos: z.array(LibraryVideoSchema),
+});
+export type VideoLibraryResponse = z.infer<typeof VideoLibraryResponseSchema>;
