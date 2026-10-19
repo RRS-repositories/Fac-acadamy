@@ -89,9 +89,14 @@ export async function fetchVideoLibrary() {
  * covers a server that has no such endpoint yet and answers 404, which is what
  * every deployment looks like until the route ships.
  *
- * Kept fresh on a window focus, unlike the summary and the transcript: the
- * shelf is a short list that an ops ingest adds to, so somebody who leaves the
- * dashboard open all day should see a new video appear without a reload.
+ * NOT refetched on a window focus, and held for five minutes.
+ *
+ * It was refetched on focus while this was only on the dashboard, where it ran
+ * once on one screen. The journey rail now asks for it on EVERY training page,
+ * so that setting became a request on every stage, lesson and quiz the trainee
+ * opens, and another every time they alt-tab back. The shelf changes when
+ * somebody runs an ops ingest — a few times a year — so a stale list for five
+ * minutes costs nothing and a reload fixes it immediately.
  */
 export function useVideoLibrary() {
   return useQuery({
@@ -104,5 +109,7 @@ export function useVideoLibrary() {
       }
     },
     retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60_000,
   });
 }

@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { useVideoLibrary } from '../../api/videos.js';
 
 /*
  * The sidebar stage rail — the prototype's signature element. Nodes joined by
@@ -24,6 +25,40 @@ function RailTitle({ stages, children, className = '' }) {
     >
       {children}
     </div>
+  );
+}
+
+/*
+ * A video in the rail.
+ *
+ * Deliberately NOT a RailItem. A RailItem shows a stage's state — done, in
+ * progress, ready, locked — and draws the line down the journey. A library
+ * video has none of those: it belongs to no stage, so it is never locked,
+ * never in progress and never completed. Showing it with a tick or a padlock
+ * would be inventing a state it cannot have.
+ */
+function RailVideo({ video, current }) {
+  return (
+    <Link
+      to="/videos"
+      aria-current={current ? 'page' : undefined}
+      className={`relative flex w-full items-start gap-3.5 px-6 py-[11px] text-left ${
+        current ? 'bg-orange/13' : 'hover:bg-white/5'
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className="relative z-10 flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full border-2 border-white/25 bg-navy-deep text-[13px]"
+      >
+        ▶
+      </span>
+      <span className="min-w-0 pt-0.5">
+        <span className="block text-[13.5px] leading-tight font-semibold text-white/85">
+          {video.title}
+        </span>
+        <span className="mt-0.5 block text-[11px] text-white/45">Watch any time</span>
+      </span>
+    </Link>
   );
 }
 
@@ -113,6 +148,14 @@ export default function Rail({ stages, currentCode = null, levelHeadings = [] })
 
   const lastCode = stages.length > 0 ? stages[stages.length - 1].code : null;
 
+  // The shelf. react-query hands back the same cached list the dashboard and
+  // the /videos page already asked for, so putting the hook here costs no
+  // extra request. A failure resolves to null and the group simply does not
+  // appear — the journey must never fail to draw because a video list did.
+  const library = useVideoLibrary();
+  const videos = library.data?.videos ?? [];
+  const onVideos = useLocation().pathname === '/videos';
+
   return (
     <nav aria-label="Your journey" className="relative flex-1 pt-1.5 pb-5">
       {levels.map((group, i) => (
@@ -150,6 +193,24 @@ export default function Rail({ stages, currentCode = null, levelHeadings = [] })
               current={stage.code === currentCode}
               last={stage.code === lastCode}
             />
+          ))}
+        </div>
+      ) : null}
+
+      {/*
+        The video shelf, last, after the department training. It is not part of
+        the journey — nothing here is locked and nothing here is marked — so it
+        has no RailTitle lock glyph and its items carry no state. It is in the
+        rail rather than only on the dashboard so that somebody mid-stage can
+        reach it without going back.
+      */}
+      {videos.length > 0 ? (
+        <div>
+          <p className="mt-5 mb-3 px-6 text-[11px] font-bold tracking-[0.12em] text-white/45 uppercase">
+            Training Videos
+          </p>
+          {videos.map((video) => (
+            <RailVideo key={video.id} video={video} current={onVideos} />
           ))}
         </div>
       ) : null}

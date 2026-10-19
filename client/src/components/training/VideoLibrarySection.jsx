@@ -84,16 +84,20 @@ function LibraryVideoRow({ video }) {
   );
 }
 
-export default function VideoLibrarySection({ videos }) {
+export default function VideoLibrarySection({ videos, heading = 'h2' }) {
   if (!Array.isArray(videos) || videos.length === 0) return null;
+  // The same shelf is the whole of /videos and a section of the dashboard.
+  // On its own page it IS the page title, so the caller picks the level
+  // rather than the page ending up with two h1s or none.
+  const Heading = heading;
 
   return (
     <section aria-labelledby="video-library" data-section="videos" className="mt-8">
       <div className="mb-1.5 flex flex-wrap items-baseline gap-3.5">
-        <h2 id="video-library" className="text-[19px] font-semibold">
+        <Heading id="video-library" className="text-[19px] font-semibold">
           <span aria-hidden="true">🎬 </span>
           Training Videos
-        </h2>
+        </Heading>
         <span className="text-[12.5px] font-semibold text-muted">
           {videos.length} video{videos.length === 1 ? '' : 's'}
         </span>
