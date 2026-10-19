@@ -18,6 +18,31 @@
 //      no empty slot left;
 //   5. queues the transcription and draft-question jobs for that recording.
 //
+// LIBRARY MODE (user decision, 19 Oct). A training video can also belong to NO
+// stage — the video library on the trainee's dashboard, which is simply every
+// call_recordings row with stage_id NULL (LibraryVideoSchema in
+// shared/contracts/media.ts has the design rules). There is no new column and
+// no migration for it: 0001 already declares stage_id nullable and says
+// "NULL = unassigned library item".
+//
+//   MEDIA_ROOT=<folder> npx tsx ops/media/ingest-media.ts \
+//     --file "<path OUTSIDE the repo>" --library --title "..." \
+//     [--description "..."] [--recording-code <code>] \
+//     --expect-db <name> [--confirm-production] [--commit]
+//
+// --library and --stage are mutually exclusive, and exactly one of them is
+// required. Neither is defaulted, in either direction: a stage-less recording
+// is invisible to every stage screen and to gate(), so creating one by
+// forgetting an argument would quietly take a recording out of somebody's
+// training. Giving both, or neither, is refused rather than guessed at.
+//
+// Library mode is a DRY RUN unless --commit is given, which is the opposite way
+// round from the stage path above (that one commits unless --dry-run) and is
+// deliberate: the stage path fills a slot that the seed already created and
+// that a human is looking at, while this one creates a row nothing in the
+// academy's structure accounts for. Passing --dry-run and --commit together is
+// a contradiction and is refused.
+//
 // Nothing in the output names a client or a member of staff: it prints the
 // stage code, the recording code, the file name, the size and the duration.
 // AI-drafted questions are never live: the consumer writes them as DRAFT for
@@ -51,7 +76,14 @@ import {
 
 export interface IngestArgs {
   file: string;
-  stageCode: string;
+  /**
+   * The stage this recording belongs to, or NULL in library mode — a video
+   * that belongs to no stage at all. Exactly one of --stage and --library is
+   * given, so `null` here means `library` is true and nothing else.
+   */
+  stageCode: string | null;
+  /** True for a stage-less library video (stage_id stays NULL). */
+  library: boolean;
   title: string;
   description: string | null;
   recordingCode: string | null;
@@ -88,14 +120,17 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
         'confirm-production': { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
         replace: { type: 'boolean', default: false },
+        library: { type: 'boolean', default: false },
+        commit: { type: 'boolean', default: false },
       },
       allowPositionals: false,
     }));
   } catch (err) {
     throw new MediaError(
       `${(err as Error).message}\nUsage: ingest-media.ts --file <path outside the repo> ` +
-        '--stage <stageCode> --title "..." [--description "..."] [--recording-code <code>] ' +
-        '--expect-db <name> [--confirm-production] [--dry-run] [--replace]',
+        '(--stage <stageCode> | --library) --title "..." [--description "..."] ' +
+        '[--recording-code <code>] --expect-db <name> [--confirm-production] ' +
+        '[--dry-run | --commit] [--replace]',
     );
   }
 
@@ -104,10 +139,53 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
     return typeof value === 'string' ? value : undefined;
   };
 
-  const stageCode = required(str('stage'), '--stage');
-  if (!CODE_RE.test(stageCode)) {
-    throw new MediaError('--stage must be a stage code: letters, digits, _ and - (max 32).');
+  const file = required(str('file'), '--file');
+
+  // --- Stage or library: exactly one, named out loud -----------------------
+  //
+  // Checked before anything else about the arguments, because it decides what
+  // the rest of them mean. Both directions are errors: --stage with --library
+  // is a contradiction, and neither of them is the forgotten-argument case
+  // that would otherwise create a recording no stage screen can see.
+  const library = values['library'] === true;
+  const stageGiven = str('stage')?.trim() ?? '';
+  if (library && stageGiven !== '') {
+    throw new MediaError(
+      '--library and --stage contradict each other. A library video belongs to no stage: ' +
+        'pass --library on its own, or pass --stage to put the recording in a stage.',
+    );
   }
+  if (!library && stageGiven === '') {
+    throw new MediaError(
+      '--stage is required. If this is a video for the dashboard video library, which belongs ' +
+        'to no stage at all, say so with --library instead — it is never the default.',
+    );
+  }
+  let stageCode: string | null = null;
+  if (!library) {
+    if (!CODE_RE.test(stageGiven)) {
+      throw new MediaError('--stage must be a stage code: letters, digits, _ and - (max 32).');
+    }
+    stageCode = stageGiven;
+  }
+
+  // A library item is a VIDEO, and nothing else. The library is a shelf of
+  // training videos on the dashboard; the academy's audio is the real client
+  // call recordings, which exist to be heard in full inside a stage, behind the
+  // no-seek player. Putting one on a freely seekable shelf with no listening
+  // requirement would be a way round the very rule it was recorded for — so an
+  // audio file is refused here rather than quietly shelved.
+  if (library) {
+    const info = mediaTypeOf(file);
+    if (info.mediaType !== 'VIDEO') {
+      throw new MediaError(
+        `--library takes a VIDEO (.mp4); ${path.basename(file)} is ${info.mediaType.toLowerCase()} ` +
+          `(${info.contentType}). Call recordings belong to a stage, where they are heard in ` +
+          'full behind the no-seek player: ingest it with --stage instead.',
+      );
+    }
+  }
+
   const recordingCode = str('recording-code')?.trim() ?? '';
   if (recordingCode !== '' && !RECORDING_CODE_RE.test(recordingCode)) {
     throw new MediaError(
@@ -121,14 +199,34 @@ export function parseIngestArgs(argv: readonly string[]): IngestArgs {
     throw new MediaError('--description is too long (max 1000 characters).');
   }
 
+  // --- Commit or roll back -------------------------------------------------
+  //
+  // Asking for both is a contradiction, and is refused rather than one of them
+  // silently winning. Which one is the DEFAULT differs by mode, on purpose:
+  //
+  //   --stage    commits unless --dry-run. Unchanged, and relied on by the
+  //              S11 manifest runs: that path fills a slot the seed already
+  //              created, on a stage somebody is looking at.
+  //   --library  rolls back unless --commit, like ops/media/transcribe.ts. A
+  //              library row is a new row that no stage, no gate and no quiz
+  //              accounts for, so the operator reads what it would write
+  //              first and then says --commit.
+  const dryRunFlag = values['dry-run'] === true;
+  const commitFlag = values['commit'] === true;
+  if (dryRunFlag && commitFlag) {
+    throw new MediaError('--dry-run and --commit contradict each other; pass one or neither.');
+  }
+  const dryRun = library ? !commitFlag : dryRunFlag;
+
   return {
-    file: required(str('file'), '--file'),
+    file,
     stageCode,
+    library,
     title,
     description: description === '' ? null : description,
     recordingCode: recordingCode === '' ? null : recordingCode,
     expectDb: parseExpectDb(str('expect-db'), values['confirm-production'] === true),
-    dryRun: values['dry-run'] === true,
+    dryRun,
     replace: values['replace'] === true,
   };
 }
@@ -163,10 +261,16 @@ interface SlotRow {
 }
 
 export interface IngestResult {
-  action: 'filled a coming-soon slot' | 'created a new recording' | 'would create/fill (dry run)';
+  action:
+    | 'filled a coming-soon slot'
+    | 'created a new recording'
+    | 'created a new library video'
+    | 'reused a library video row'
+    | 'would create/fill (dry run)';
   recordingId: string;
   recordingCode: string | null;
-  stageCode: string;
+  /** Null for a library video, which belongs to no stage. */
+  stageCode: string | null;
   mediaKey: string;
   byteSize: number;
   durationSecs: number;
@@ -247,9 +351,144 @@ export interface IngestInput {
   mediaType: 'AUDIO' | 'VIDEO';
 }
 
+/**
+ * The category a library video takes.
+ *
+ * `category` is NOT NULL with a five-value CHECK (0001, widened by 0003), and
+ * four of the five name a stage's audience: SALES, CUSTOMER_SERVICE, INDUCTION
+ * and DEPARTMENT are all answers to "whose stage is this recording on?", which
+ * a library video has no answer to. COACHING is the one that is not — it is
+ * general training material — so it is what a stage-less video gets. Nothing in
+ * the academy reads the category of a stage-less row; this is here to satisfy
+ * the constraint honestly rather than to be queried.
+ */
+const LIBRARY_CATEGORY = 'COACHING';
+
+/**
+ * The database half of library mode: a row with stage_id NULL.
+ *
+ * There is no slot to fill. "Coming soon" slots are created by the seed per
+ * stage (D4) and a library video has no stage, so unless --recording-code names
+ * an existing stage-less row this always inserts.
+ *
+ * `position` stays NULL. It orders recordings WITHIN a stage — the unique index
+ * from 0002 is partial on `stage_id IS NOT NULL AND position IS NOT NULL` — and
+ * the library response carries no position at all, so inventing one here would
+ * be a number nothing reads.
+ *
+ * `transcript_status` is 'NOT_REQUIRED', not the table's 'PENDING' default. See
+ * the comment in main() about the jobs: the transcription worker would reach
+ * exactly that conclusion itself, so saying it on the way in keeps the pending
+ * backlog readable instead of parking a row in it that nothing will ever do.
+ */
+async function writeLibraryVideo(db: Queryable, input: IngestInput): Promise<IngestResult> {
+  const { args } = input;
+  const common = {
+    stageCode: null,
+    mediaKey: input.mediaKey,
+    byteSize: input.byteSize,
+    durationSecs: input.durationSecs,
+    contentType: input.contentType,
+    sha256: input.sha256,
+  };
+
+  if (args.recordingCode !== null) {
+    const { rows } = await db.query<{
+      id: string;
+      code: string | null;
+      media_key: string | null;
+      stage_id: string | null;
+    }>(
+      `SELECT id::text AS id, code, media_key, stage_id::text AS stage_id
+         FROM academy.call_recordings WHERE code = $1 FOR UPDATE`,
+      [args.recordingCode],
+    );
+    const existing = rows[0];
+    if (existing !== undefined) {
+      // A row that belongs to a stage is NOT quietly moved onto the shelf.
+      // Taking a recording out of a stage changes what that stage's gate
+      // counts, which is a content decision and not an ingest one.
+      if (existing.stage_id !== null) {
+        throw new MediaError(
+          `Recording "${args.recordingCode}" belongs to a stage. A library video belongs to ` +
+            'none: ingest this file under a new --recording-code, or pass that stage with ' +
+            '--stage instead of --library.',
+        );
+      }
+      if (existing.media_key !== null && !args.replace) {
+        throw new MediaError(
+          `Library video "${args.recordingCode}" already has media. Pass --replace to overwrite ` +
+            'it, or ingest under a new code.',
+        );
+      }
+      await db.query(
+        `UPDATE academy.call_recordings
+            SET stage_id = NULL, title = $2, description = COALESCE($3, description),
+                media_key = $4, duration_secs = $5, media_type = $6, byte_size = $7,
+                content_type = $8, checksum_sha256 = $9, uploaded_at = now(),
+                transcript_status = 'NOT_REQUIRED', is_active = TRUE
+          WHERE id = $1`,
+        [
+          existing.id,
+          args.title,
+          args.description,
+          input.mediaKey,
+          input.durationSecs,
+          input.mediaType,
+          input.byteSize,
+          input.contentType,
+          input.sha256,
+        ],
+      );
+      return {
+        ...common,
+        action: 'reused a library video row',
+        recordingId: existing.id,
+        recordingCode: existing.code,
+      };
+    }
+    // No such code: fall through and insert a new row carrying it.
+  }
+
+  const { rows } = await db.query<{ id: string; code: string | null }>(
+    `INSERT INTO academy.call_recordings
+       (code, stage_id, position, category, title, description, media_key, duration_secs,
+        media_type, byte_size, content_type, checksum_sha256, uploaded_at, transcript_status)
+     VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), 'NOT_REQUIRED')
+     RETURNING id::text AS id, code`,
+    [
+      args.recordingCode,
+      LIBRARY_CATEGORY,
+      args.title,
+      args.description,
+      input.mediaKey,
+      input.durationSecs,
+      input.mediaType,
+      input.byteSize,
+      input.contentType,
+      input.sha256,
+    ],
+  );
+  const created = rows[0];
+  if (created === undefined) throw new MediaError('The library video row was not created.');
+  return {
+    ...common,
+    action: 'created a new library video',
+    recordingId: created.id,
+    recordingCode: created.code,
+  };
+}
+
 /** The database half: fill a slot or add a row. Runs inside the transaction. */
 export async function writeRecording(db: Queryable, input: IngestInput): Promise<IngestResult> {
   const { args } = input;
+  if (args.library) return writeLibraryVideo(db, input);
+  if (args.stageCode === null) {
+    // Unreachable through parseIngestArgs, which requires exactly one of the
+    // two. Stated anyway: a stage-less row must only ever be created by the
+    // branch above, which is the one that says so out loud.
+    throw new MediaError('No --stage and no --library: refusing to guess.');
+  }
   const stage = await findStage(db, args.stageCode);
   const slot = await findEmptySlot(db, stage.id, args.recordingCode, args.replace);
 
@@ -383,27 +622,66 @@ async function main(): Promise<number> {
     //    in-memory one (server/src/queues/queue.ts), so this records the two
     //    jobs and their payloads; transcript_status = 'PENDING' on the row is
     //    the durable marker the S08 worker picks the recording up from.
+    //
+    //    LIBRARY MODE QUEUES NEITHER JOB, and that is a decision rather than an
+    //    omission:
+    //
+    //      transcription  a library item is always a VIDEO (refused otherwise
+    //                     in parseIngestArgs), and createTranscriptionHandler
+    //                     answers every non-AUDIO recording by marking it
+    //                     NOT_REQUIRED and completing — transcripts are for
+    //                     calls in version one. So the job's only possible
+    //                     outcome is the status this ingest already wrote on
+    //                     the row. Queueing it would buy a round trip.
+    //      question-gen   it drafts quiz questions for a stage's quiz. A
+    //                     library video has no stage and no quiz, so there is
+    //                     nothing for the draft to be attached to or approved
+    //                     onto.
+    //
+    //    Both are reversible if either ever becomes meaningful: set
+    //    transcript_status back to 'PENDING' and re-drive, exactly as the
+    //    transcription handler's own comment describes.
     const queue = createInMemoryQueue();
-    const producers = createMediaProducers(queue);
-    const recordingId = Number(result.recordingId);
-    await producers.enqueueTranscription({
-      recordingId,
-      mediaKey,
-      contentType: info.contentType,
-      durationSecs,
-    });
-    await producers.enqueueQuestionGen({ recordingId, stageId: null, approvalState: 'DRAFT' });
+    if (!args.library) {
+      const producers = createMediaProducers(queue);
+      const recordingId = Number(result.recordingId);
+      await producers.enqueueTranscription({
+        recordingId,
+        mediaKey,
+        contentType: info.contentType,
+        durationSecs,
+      });
+      await producers.enqueueQuestionGen({ recordingId, stageId: null, approvalState: 'DRAFT' });
+    }
 
+    const where =
+      result.stageCode === null
+        ? 'in the video library (no stage: stage_id stays NULL)'
+        : `on stage ${result.stageCode}`;
     console.log(
       `\n${args.dryRun ? 'Dry run — would have: ' : ''}${result.action}: recording #${
         result.recordingId
-      } (${result.recordingCode ?? 'no code'}) on stage ${result.stageCode}.`,
+      } (${result.recordingCode ?? 'no code'}) ${where}.`,
     );
-    console.log(
-      `Queued: ${queue.jobs.map((j) => `${j.queue}/${j.name}`).join(', ')} for recording #` +
-        `${result.recordingId}. Draft questions stay DRAFT until a human approves them.`,
-    );
-    if (args.dryRun) console.log('Nothing was written to disk and the transaction rolled back.');
+    if (args.library) {
+      console.log(
+        'Queued: nothing. A library video is not transcribed (videos are NOT_REQUIRED in ' +
+          'version one) and has no quiz to draft questions for.',
+      );
+      console.log(
+        "It is listed under the trainee's department training, is never locked, and watching " +
+          'it earns no credit towards any stage.',
+      );
+    } else {
+      console.log(
+        `Queued: ${queue.jobs.map((j) => `${j.queue}/${j.name}`).join(', ')} for recording #` +
+          `${result.recordingId}. Draft questions stay DRAFT until a human approves them.`,
+      );
+    }
+    if (args.dryRun) {
+      console.log('Nothing was written to disk and the transaction rolled back.');
+      if (args.library) console.log('Re-run with --commit to write it for real.');
+    }
     return 0;
   } finally {
     await client.end().catch(() => undefined);

@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { useRecordingTranscript } from '../../api/media.js';
+import { formatClock } from './duration.js';
 
 /*
  * The transcript panel under a recording: what was said, line by line, with the
@@ -58,14 +59,6 @@ const SPEAKER_TONES = {
   A: 'text-navy-mid',
   B: 'text-amber',
 };
-
-/** m:ss, the same shape the player's own clock uses. */
-function fmt(secs) {
-  if (!Number.isFinite(secs) || secs < 0) return '0:00';
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
 
 /**
  * The index of the line being spoken at `position`: the last line that has
@@ -153,7 +146,7 @@ const TranscriptLines = memo(function TranscriptLines({
               }}
               title={
                 heard
-                  ? `Play this line again from ${fmt(segment.start)}`
+                  ? `Play this line again from ${formatClock(segment.start)}`
                   : 'You can go back to a line you have heard, but not forward to one you have not'
               }
               className={`flex w-full gap-2.5 rounded-[7px] px-2 py-1 text-left text-[13.5px] leading-[1.55] transition-colors ${
@@ -167,7 +160,7 @@ const TranscriptLines = memo(function TranscriptLines({
               } ${heard ? 'cursor-pointer' : 'cursor-default opacity-[0.55]'} focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-orange`}
             >
               <span className="w-[38px] shrink-0 pt-px text-[11px] text-muted tabular-nums">
-                {fmt(segment.start)}
+                {formatClock(segment.start)}
               </span>
               <span className="min-w-0 break-words">
                 {showSpeaker ? (

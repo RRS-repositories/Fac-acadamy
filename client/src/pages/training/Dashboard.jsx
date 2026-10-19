@@ -1,5 +1,6 @@
 import { useTrack } from '../../api/training.js';
 import { useMyCertificates } from '../../api/certs.js';
+import { useVideoLibrary } from '../../api/videos.js';
 import { useAuth } from '../../auth/AuthProvider.jsx';
 import WaitingForTrack from '../WaitingForTrack.jsx';
 import AcademyGrownNotice from '../../components/training/AcademyGrownNotice.jsx';
@@ -9,6 +10,7 @@ import LevelSection from '../../components/training/LevelSection.jsx';
 import NextUpCta from '../../components/training/NextUpCta.jsx';
 import ProgressRing from '../../components/training/ProgressRing.jsx';
 import TrainingLayout from '../../components/training/TrainingLayout.jsx';
+import VideoLibrarySection from '../../components/training/VideoLibrarySection.jsx';
 import { btnGhost, cardClass, heroGradient } from '../../components/training/styles.js';
 
 /*
@@ -90,6 +92,10 @@ export default function Dashboard() {
   // S09: the accomplishment banner. A separate query, so a slow or failing
   // certificate call can never keep the training itself off the screen.
   const certificates = useMyCertificates();
+  // The video library (19 Oct). A third separate query, for the same reason,
+  // and it resolves to null rather than failing: a shelf of reference videos
+  // must never be what stops somebody's stages appearing.
+  const videos = useVideoLibrary();
 
   if (track.isPending) {
     return (
@@ -183,6 +189,14 @@ export default function Dashboard() {
       {deptStages.length > 0 ? (
         <DeptSection stages={deptStages} nextCode={next?.code ?? null} heading={deptHeading} />
       ) : null}
+
+      {/*
+        Last on the page, after the department training, because the library
+        belongs to no stage and is not part of the journey: it is a reference
+        shelf to come back to, not the next thing to do. It renders nothing at
+        all while the list is empty, which is most tracks.
+      */}
+      <VideoLibrarySection videos={videos.data?.videos ?? []} />
     </TrainingLayout>
   );
 }

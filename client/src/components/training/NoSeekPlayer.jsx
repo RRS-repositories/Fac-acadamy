@@ -3,6 +3,7 @@ import { MEDIA_BEACON_INTERVAL_MS } from '@fac-academy/shared';
 import { mediaStreamPath, useListenReporter } from '../../api/media.js';
 import RecordingSummary from './RecordingSummary.jsx';
 import RecordingTranscript from './RecordingTranscript.jsx';
+import { formatClock } from './duration.js';
 import { badgeBase, badgeTone, cardClass } from './styles.js';
 
 /*
@@ -98,13 +99,6 @@ function owedAbove(batch, acceptedTo) {
     }
   }
   return joined;
-}
-
-function fmt(secs) {
-  if (!Number.isFinite(secs) || secs < 0) return '0:00';
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export default function NoSeekPlayer({ recording, stageCode }) {
@@ -369,8 +363,8 @@ export default function NoSeekPlayer({ recording, stageCode }) {
             <span className="block h-full rounded-full bg-orange" style={{ width: `${pct}%` }} />
           </span>
           <span className="mt-1 flex justify-between text-[11px] text-muted tabular-nums">
-            <span>{fmt(position)}</span>
-            <span>{duration === null ? '--:--' : fmt(duration)}</span>
+            <span>{formatClock(position)}</span>
+            <span>{duration === null ? '--:--' : formatClock(duration)}</span>
           </span>
         </span>
 

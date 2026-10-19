@@ -116,6 +116,7 @@ describe('ingest-media arguments', () => {
     ).toEqual({
       file: 'E:/somewhere/outside/call.mp3',
       stageCode: 's4',
+      library: false,
       title: 'Reminder call done right',
       description: 'Remind and resend only',
       recordingCode: 's4-rec1',
@@ -160,6 +161,118 @@ describe('ingest-media arguments', () => {
 
   it('refuses a production database', () => {
     expect(() => parseIngestArgs([...base.slice(0, 7), 'academy_live'])).toThrow(
+      /looks like production/,
+    );
+  });
+});
+
+describe('ingest-media library mode', () => {
+  // A stage-less recording is the video library (user decision, 19 Oct):
+  // call_recordings.stage_id IS NULL. There is no migration for it; what there
+  // is, is a flag nobody can trip over by accident.
+  const lib = [
+    '--file',
+    'E:/somewhere/outside/DSAR_Review_Training.mp4',
+    '--library',
+    '--title',
+    'DSAR Review Training',
+    '--expect-db',
+    'academy_dev',
+  ];
+
+  it('parses --library into a stage-less ingest', () => {
+    expect(parseIngestArgs([...lib, '--description', 'How to work a DSAR'])).toEqual({
+      file: 'E:/somewhere/outside/DSAR_Review_Training.mp4',
+      stageCode: null,
+      library: true,
+      title: 'DSAR Review Training',
+      description: 'How to work a DSAR',
+      recordingCode: null,
+      expectDb: 'academy_dev',
+      dryRun: true,
+      replace: false,
+    });
+  });
+
+  it('refuses --library and --stage together, and refuses neither', () => {
+    expect(() => parseIngestArgs([...lib, '--stage', 's4'])).toThrow(/contradict each other/);
+    // Forgetting both is the dangerous case: it must never fall back to a
+    // stage-less row, so the message says --library exists and is never the
+    // default.
+    expect(() =>
+      parseIngestArgs([
+        '--file',
+        'E:/somewhere/outside/x.mp4',
+        '--title',
+        't',
+        '--expect-db',
+        'academy_dev',
+      ]),
+    ).toThrow(/--stage is required.*--library instead/s);
+  });
+
+  it('refuses audio in library mode and says why', () => {
+    expect(() =>
+      parseIngestArgs([
+        '--file',
+        'E:/somewhere/outside/call.mp3',
+        '--library',
+        '--title',
+        't',
+        '--expect-db',
+        'academy_dev',
+      ]),
+    ).toThrow(/--library takes a VIDEO/);
+    // Still the ordinary unsupported-format refusal for anything else.
+    expect(() =>
+      parseIngestArgs([
+        '--file',
+        'E:/somewhere/outside/clip.ogg',
+        '--library',
+        '--title',
+        't',
+        '--expect-db',
+        'academy_dev',
+      ]),
+    ).toThrow(/Unsupported media file/);
+  });
+
+  it('is a DRY RUN unless --commit is given', () => {
+    expect(parseIngestArgs(lib).dryRun).toBe(true);
+    expect(parseIngestArgs([...lib, '--commit']).dryRun).toBe(false);
+    expect(parseIngestArgs([...lib, '--dry-run']).dryRun).toBe(true);
+    expect(() => parseIngestArgs([...lib, '--dry-run', '--commit'])).toThrow(/contradict/);
+  });
+
+  it('leaves the stage path committing unless --dry-run', () => {
+    // The opposite default, on purpose: --stage fills a slot the seed already
+    // made, while --library creates a row no stage accounts for.
+    const stageBase = [
+      '--file',
+      'E:/somewhere/outside/call.mp3',
+      '--stage',
+      's4',
+      '--title',
+      'Reminder call done right',
+      '--expect-db',
+      'academy_dev',
+    ];
+    expect(parseIngestArgs(stageBase).dryRun).toBe(false);
+    expect(parseIngestArgs([...stageBase, '--dry-run']).dryRun).toBe(true);
+    expect(parseIngestArgs([...stageBase, '--commit']).dryRun).toBe(false);
+  });
+
+  it('keeps every other guard: --file, --title, --expect-db and production', () => {
+    expect(() => parseIngestArgs(['--library', '--title', 't', '--expect-db', 'd'])).toThrow(
+      /--file/,
+    );
+    expect(() =>
+      parseIngestArgs(['--file', 'E:/x/a.mp4', '--library', '--expect-db', 'academy_dev']),
+    ).toThrow(/--title/);
+    expect(() => parseIngestArgs(['--file', 'E:/x/a.mp4', '--library', '--title', 't'])).toThrow(
+      /--expect-db/,
+    );
+    expect(() => parseIngestArgs([...lib.slice(0, 6), 'academy_live'])).toThrow(
       /looks like production/,
     );
   });
