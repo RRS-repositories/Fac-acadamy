@@ -12,6 +12,7 @@
     "admin:set-track": "tsx admin/set-track.ts",
     "admin:set-role": "tsx admin/set-role-override.ts",
     "admin:authorise-stage1": "tsx admin/authorise-stage1.ts",
+    "admin:withdraw-recording": "tsx admin/withdraw-recording.ts",
     "test": "vitest run"
   },
   "dependencies": {
