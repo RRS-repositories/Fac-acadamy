@@ -43,6 +43,10 @@ export const AUDIT_EVENTS = [
   // afterwards that are served the stored text. The payload names the model and
   // counts characters; it never carries the transcript or the summary itself.
   'RECORDING_SUMMARISED',
+  // ops/admin/withdraw-recording.ts: a recording taken out of the training (its
+  // row set inactive, its file kept), and put back again.
+  'RECORDING_WITHDRAWN',
+  'RECORDING_RESTORED',
   'QUIZ_SUBMIT',
   'STAGE_PASS',
   'LEVEL_PASS',
